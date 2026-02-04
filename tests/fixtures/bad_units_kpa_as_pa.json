@@ -1,0 +1,79 @@
+{
+  "schema_version": "2.0",
+  "description": "Test fixture: Pc in kPa mistakenly stored as Pa (should fail validation)",
+  "components": {
+    "PROPANE_BAD": {
+      "id": "PROPANE_BAD",
+      "name": "Propane (Bad Units)",
+      "formula": "C3H8",
+      "cas": "74-98-6",
+      "smiles": "CCC",
+      "family": "N_ALKANE",
+      "groups": {
+        "CH3": 2,
+        "CH2": 1
+      },
+      "Tc": 369.83,
+      "Tc_unit": "K",
+      "Pc": 4251.2,
+      "Pc_unit": "Pa",
+      "Vc": 0.0002,
+      "Vc_unit": "m3/mol",
+      "omega": 0.152,
+      "MW": 44.096,
+      "MW_unit": "g/mol",
+      "Tb": 231.04,
+      "Tb_unit": "K",
+      "note": "INTENTIONALLY BAD: Pc = 4251.2 is actually kPa (should be 4251200 Pa)",
+      "aliases": []
+    },
+    "METHANE_CELSIUS": {
+      "id": "METHANE_CELSIUS",
+      "name": "Methane (Celsius as Kelvin)",
+      "formula": "CH4",
+      "cas": "74-82-8",
+      "smiles": "C",
+      "family": "N_ALKANE",
+      "groups": {
+        "CH4": 1
+      },
+      "Tc": -82.59,
+      "Tc_unit": "K",
+      "Pc": 4599000,
+      "Pc_unit": "Pa",
+      "Vc": 9.86e-05,
+      "Vc_unit": "m3/mol",
+      "omega": 0.011,
+      "MW": 16.043,
+      "MW_unit": "g/mol",
+      "Tb": -161.5,
+      "Tb_unit": "K",
+      "note": "INTENTIONALLY BAD: Tc and Tb are in Celsius, not Kelvin",
+      "aliases": []
+    },
+    "ETHANE_WRONG_UNIT_LABEL": {
+      "id": "ETHANE_WRONG_UNIT_LABEL",
+      "name": "Ethane (Wrong Unit Metadata)",
+      "formula": "C2H6",
+      "cas": "74-84-0",
+      "smiles": "CC",
+      "family": "N_ALKANE",
+      "groups": {
+        "CH3": 2
+      },
+      "Tc": 305.32,
+      "Tc_unit": "C",
+      "Pc": 4872000,
+      "Pc_unit": "kPa",
+      "Vc": 0.0001455,
+      "Vc_unit": "cm3/mol",
+      "omega": 0.099,
+      "MW": 30.069,
+      "MW_unit": "kg/kmol",
+      "Tb": 184.55,
+      "Tb_unit": "K",
+      "note": "INTENTIONALLY BAD: Unit metadata fields have non-canonical units",
+      "aliases": []
+    }
+  }
+}

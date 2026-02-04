@@ -1,0 +1,23 @@
+{
+  "case_id": "synthetic_c1_c4_bubble_point",
+  "description": "Bubble point calculation for C1-C4 binary at 280K",
+  "task": "bubble_point",
+  "source": "Synthetic test - bubble point verification",
+  "temperature": { "value": 280.0, "unit": "K" },
+  "composition": [
+    { "id": "C1", "z": 0.4 },
+    { "id": "nC4", "z": 0.6 }
+  ],
+  "mi_settings": {
+    "eos": "Peng-Robinson 1976",
+    "kij": "zero"
+  },
+  "expected": {
+    "pressure_pa": 10528266,
+    "notes": "Bubble point ~105 bar. High due to significant C1 content requiring high pressure to liquefy."
+  },
+  "tolerances": {
+    "pressure_pa_atol": 500000,
+    "notes": "5 bar tolerance for initial validation"
+  }
+}
