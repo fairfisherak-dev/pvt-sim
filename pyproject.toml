@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=69.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pvt-simulator"
+version = "0.1.0"
+description = "High-fidelity petroleum PVT simulator core (EOS, stability, flash, characterization)."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Ole" }]
+keywords = ["pvt", "eos", "peng-robinson", "flash", "stability", "reservoir"]
+
+# Keep the runtime dependency surface small; test/docs/dev tooling lives in optional extras.
+dependencies = [
+  "numpy>=1.20",
+  "matplotlib>=3.4",
+]
+
+[project.optional-dependencies]
+# Install with: pip install -e '.[dev]'
+dev = [
+  "pytest>=7.0",
+  "pytest-cov>=3.0",
+  "black>=22.0",
+  "flake8>=4.0",
+  "mypy>=0.950",
+  "pylint>=2.13.0",
+  "build>=0.8.0",
+  "wheel>=0.37.0",
+]
+# Install with: pip install -e '.[docs]'
+docs = [
+  "sphinx>=4.5.0",
+  "sphinx-rtd-theme>=1.0.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["pvtcore*"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
