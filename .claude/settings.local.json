@@ -17,7 +17,16 @@
       "Bash(python scripts/add_components.py:*)",
       "Bash(python scripts/validate_components.py:*)",
       "Bash(python:*)",
-      "Bash(pytest:*)"
+      "Bash(pytest:*)",
+      "Bash(powershell:*)",
+      "Bash(\"c:\\\\Users\\\\olefa\\\\dev\\\\pete665-project\\\\pvt-sim_claude\\\\dist\\\\pvtsim\\\\pvtsim-cli.exe\" validate)",
+      "Bash(\"c:\\\\Users\\\\olefa\\\\dev\\\\pete665-project\\\\pvt-sim_claude\\\\dist\\\\pvtsim\\\\pvtsim-cli.exe\":*)",
+      "Bash(\"c:\\\\Users\\\\olefa\\\\dev\\\\pete665-project\\\\pvt-sim_claude\\\\dist\\\\pvtsim\\\\pvtsim-cli.exe\" validate --help)",
+      "Bash(echo:*)",
+      "Bash(start \"\" \"c:\\\\Users\\\\olefa\\\\dev\\\\pete665-project\\\\pvt-sim_claude\\\\dist\\\\pvtsim\\\\pvtsim.exe\")",
+      "Bash(timeout:*)",
+      "Bash(tasklist:*)",
+      "Bash(cmd /c \"start \"\"\"\" \"\"c:\\\\Users\\\\olefa\\\\dev\\\\pete665-project\\\\pvt-sim_claude\\\\dist\\\\pvtsim\\\\pvtsim.exe\"\" && ping -n 6 127.0.0.1 > nul && tasklist /FI \"\"IMAGENAME eq pvtsim.exe\"\"\")"
     ]
   }
 }
