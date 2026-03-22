@@ -47,6 +47,23 @@ PVT-SIM is a modular phase behavior simulator designed for both standalone use a
 
 ---
 
+## Supported Workflows
+
+The current executable workflow surface in this repo is:
+
+- Fluid characterization from resolved components plus a plus fraction
+- Bulk thermo workflows: stability analysis, PT flash, bubble-point, dew-point, and phase-envelope calculations
+- Property workflows: density, Lohrenz-Bray-Clark viscosity, and parachor interfacial tension
+- Laboratory workflows: CCE, DL, CVD, and multi-stage separator-train calculations
+- Confinement workflows: capillary-pressure coupling, confined flash, and confined-envelope calculations
+- EOS tuning workflows limited to the currently supported regression data types in `pvtcore.tuning`
+
+The following dedicated TBP workflow surface is intentionally not part of the supported product surface:
+
+- `pvtcore.experiments` and `pvtapp` still expose no dedicated TBP workflow today. Phase-1 TBP support is limited to schema-driven `pvtcore` characterization via `fluid.plus_fraction.tbp_data.cuts`; refer to [`docs/tbp.md`](tbp.md) before assuming broader support.
+
+---
+
 ## Module Specifications
 
 ### core/

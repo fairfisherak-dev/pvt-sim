@@ -47,11 +47,11 @@ fluid:
 
   plus_fraction:                      # OPTIONAL (present if a plus cut exists)
     label: "C7+"
-    z_plus: 0.0392
     cut_start: 7                      # carbon number start (e.g., 7 for C7+)
-    mw_plus_g_per_mol: 165.0
-    sg_plus_60F: 0.815                # specific gravity at 60°F/60°F convention
-    tbp_data:                         # OPTIONAL (if TBP cut data exists)
+    z_plus: 0.0392                    # required unless derived from tbp_data.cuts
+    mw_plus_g_per_mol: 165.0          # required unless derived from tbp_data.cuts
+    sg_plus_60F: 0.815                # optional pass-through specific gravity metadata
+    tbp_data:                         # OPTIONAL executable only in schema-driven pvtcore characterization
       cuts:
         - name: "C7"
           z: 0.010
@@ -68,7 +68,7 @@ fluid:
       pedersen:
         form: "ln_z = A + B*MW"       # slide + plan-aligned canonical form
         mw_model: "MWn = 14n - 4"     # Danesh-style approximation if needed
-        solve_AB_from: "balances"     # balances | fit_to_tbp
+        solve_AB_from: "balances"     # only supported mode today; fit_to_tbp remains unsupported
       katz:
         zn_formula: "zn = 1.38205*z7plus*exp(-0.25903*n)"
       lohrens:
@@ -110,4 +110,8 @@ confinement:                          # OPTIONAL: only for nano-confined runs
     max_iters: 50
     tol_pc_pa: 1.0
     ift_method: "parachor"            # depends on densities + compositions
+```
 
+TBP note: `tbp_data.cuts` is supported only in the schema-driven `pvtcore` fluid-definition path (`load_fluid_definition(...)` + `characterize_from_schema(...)`). In phase 1 it derives aggregate `z_plus` and `mw_plus_g_per_mol` values that feed the existing plus-fraction characterization workflow.
+
+This does **not** create a dedicated TBP experiment workflow. `pvtapp` still exposes no TBP calculation type, `pvtcore.experiments.tbp` remains absent, and `solve_AB_from: fit_to_tbp` is still unsupported. See [`docs/tbp.md`](tbp.md).
