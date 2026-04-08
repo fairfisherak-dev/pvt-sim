@@ -43,6 +43,10 @@ from ..flash.pt_flash import pt_flash
 from ..properties.density import calculate_density, mixture_molecular_weight
 
 
+CVD_VOLUME_RELATIVE_TOLERANCE: float = 1e-10
+CVD_VOLUME_ABSOLUTE_TOLERANCE: float = 1e-15
+
+
 @dataclass
 class CVDStepResult:
     """Results from a single CVD pressure step.
@@ -51,8 +55,8 @@ class CVDStepResult:
         pressure: Pressure at this step (Pa)
         temperature: Temperature (K)
         liquid_dropout: Liquid volume / cell volume (fraction)
-        gas_produced: Gas removed this step (fraction of initial)
-        cumulative_gas_produced: Total gas removed (fraction of initial)
+        gas_produced: Produced fluid removed this step (fraction of initial)
+        cumulative_gas_produced: Total produced fluid removed (fraction of initial)
         Z_two_phase: Two-phase compressibility factor
         liquid_density: Liquid density (kg/m³)
         vapor_density: Vapor density (kg/m³)
@@ -86,7 +90,7 @@ class CVDResult:
         steps: List of results for each pressure step
         pressures: Array of pressures (Pa)
         liquid_dropouts: Array of liquid dropout fractions
-        cumulative_gas: Array of cumulative gas produced
+        cumulative_gas: Array of cumulative produced fluid removed
         Z_values: Array of two-phase Z factors
         feed_composition: Original feed composition
         converged: True if all steps converged
@@ -101,6 +105,16 @@ class CVDResult:
     Z_values: NDArray[np.float64]
     feed_composition: NDArray[np.float64]
     converged: bool
+
+
+def _volume_matches_target(actual_volume: float, target_volume: float) -> bool:
+    """Check whether the constant-volume constraint is satisfied."""
+    return bool(np.isclose(
+        actual_volume,
+        target_volume,
+        rtol=CVD_VOLUME_RELATIVE_TOLERANCE,
+        atol=CVD_VOLUME_ABSOLUTE_TOLERANCE,
+    ))
 
 
 def simulate_cvd(
@@ -143,7 +157,7 @@ def simulate_cvd(
     -----
     Key outputs:
     - Liquid dropout: Volume of retrograde liquid
-    - Gas produced: Amount removed to maintain volume
+    - Produced fluid removed: Amount removed to maintain volume
     - Z-factor: Two-phase compressibility
 
     The CVD test is particularly important for:
@@ -268,38 +282,54 @@ def _cvd_step(
     # Flash at current P, T
     flash = pt_flash(P, T, z, components, eos, binary_interaction=binary_interaction)
 
-    if flash.phase == 'vapor':
-        # Still single-phase gas
-        Z = eos.compressibility(P, T, z, phase='vapor', binary_interaction=binary_interaction)
+    if flash.phase in {"vapor", "liquid"}:
+        # Single-phase fluid: remove enough of the current phase to restore the
+        # original cell volume. This keeps the constant-volume constraint exact
+        # even when the flash classifies the state as liquid-like.
+        phase = flash.phase
+        Z = eos.compressibility(P, T, z, phase=phase, binary_interaction=binary_interaction)
         if isinstance(Z, list):
-            Z = Z[-1]
+            Z = Z[0] if phase == "liquid" else Z[-1]
 
-        # Volume at current P with current moles
-        V_current = n_total * Z * R.Pa_m3_per_mol_K * T / P
+        molar_volume = Z * R.Pa_m3_per_mol_K * T / P
+        V_current = n_total * molar_volume
 
-        # Gas to remove to restore V_cell
-        # V_cell = (n_total - n_remove) * Z * R * T / P
-        n_remove = n_total - V_cell * P / (Z * R.Pa_m3_per_mol_K * T)
-        n_remove = max(0.0, n_remove)
+        if V_current < V_cell and not _volume_matches_target(V_current, V_cell):
+            raise PhaseError(
+                "Single-phase CVD step cannot satisfy target cell volume by depletion",
+                phase=phase,
+                pressure=P,
+                temperature=T,
+                current_volume=V_current,
+                target_volume=V_cell,
+            )
+
+        n_target = V_cell / molar_volume
+        if n_target > n_total and _volume_matches_target(V_current, V_cell):
+            n_target = n_total
+
+        n_remove = max(0.0, n_total - n_target)
+        if n_remove < CVD_VOLUME_ABSOLUTE_TOLERANCE:
+            n_remove = 0.0
 
         gas_produced = n_remove  # Fraction of initial = n_remove (since initial = 1)
         cumulative_gas += gas_produced
         n_new = n_total - n_remove
 
-        rho_V = calculate_density(P, T, z, components, eos, 'vapor', binary_interaction)
+        rho = calculate_density(P, T, z, components, eos, phase, binary_interaction)
 
         return (
             CVDStepResult(
                 pressure=P,
                 temperature=T,
-                liquid_dropout=0.0,
+                liquid_dropout=1.0 if phase == "liquid" else 0.0,
                 gas_produced=gas_produced,
                 cumulative_gas_produced=cumulative_gas,
                 Z_two_phase=Z,
-                liquid_density=0.0,
-                vapor_density=rho_V.mass_density,
-                liquid_composition=np.zeros_like(z),
-                vapor_composition=z.copy(),
+                liquid_density=rho.mass_density if phase == "liquid" else 0.0,
+                vapor_density=rho.mass_density if phase == "vapor" else 0.0,
+                liquid_composition=z.copy() if phase == "liquid" else np.zeros_like(z),
+                vapor_composition=z.copy() if phase == "vapor" else np.zeros_like(z),
                 cell_composition=z.copy(),
                 moles_remaining=n_new,
             ),

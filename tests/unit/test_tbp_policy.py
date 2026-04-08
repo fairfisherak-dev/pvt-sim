@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 
 import numpy as np
+import pytest
 
 from pvtapp.schemas import CalculationType
 from pvtcore.io import characterize_from_schema
@@ -46,20 +46,17 @@ def _tbp_schema_doc() -> dict:
     }
 
 
-def test_tbp_module_is_removed() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    tbp_path = repo_root / "src" / "pvtcore" / "experiments" / "tbp.py"
+def test_tbp_module_exists_as_explicit_stub() -> None:
+    module = importlib.import_module("pvtcore.experiments.tbp")
 
-    assert not tbp_path.exists()
+    assert hasattr(module, "simulate_tbp")
 
 
-def test_tbp_module_import_fails_cleanly() -> None:
-    try:
-        importlib.import_module("pvtcore.experiments.tbp")
-    except ModuleNotFoundError:
-        return
+def test_tbp_module_stub_fails_honestly() -> None:
+    module = importlib.import_module("pvtcore.experiments.tbp")
 
-    raise AssertionError("pvtcore.experiments.tbp should not be importable")
+    with pytest.raises(NotImplementedError, match="Standalone TBP execution is not implemented yet"):
+        module.simulate_tbp()
 
 
 def test_tbp_is_not_a_pvtapp_calculation_type() -> None:
