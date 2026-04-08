@@ -60,6 +60,7 @@ class DLStepResult:
         gas_composition: Composition of liberated gas
         vapor_fraction: Molar vapor fraction before removal
         cumulative_gas: Cumulative gas produced (sm³/sm³ original)
+        liquid_moles_remaining: Liquid moles retained after this step (fraction of initial)
     """
     pressure: float
     temperature: float
@@ -73,6 +74,7 @@ class DLStepResult:
     gas_composition: NDArray[np.float64]
     vapor_fraction: float
     cumulative_gas: float
+    liquid_moles_remaining: float
 
 
 @dataclass
@@ -222,6 +224,7 @@ def simulate_dl(
         gas_composition=np.zeros_like(z),
         vapor_fraction=0.0,
         cumulative_gas=0.0,
+        liquid_moles_remaining=1.0,
     ))
 
     for P in pressure_steps:
@@ -251,6 +254,7 @@ def simulate_dl(
                 gas_composition=np.zeros_like(z),
                 vapor_fraction=np.nan,
                 cumulative_gas=cumulative_gas,
+                liquid_moles_remaining=n_liquid,
             ))
 
     # Extract arrays
@@ -322,6 +326,7 @@ def _dl_step(
                 gas_composition=np.zeros_like(z),
                 vapor_fraction=0.0,
                 cumulative_gas=cumulative_gas,
+                liquid_moles_remaining=n_liquid,
             ),
             z.copy(),
             n_liquid,
@@ -377,6 +382,7 @@ def _dl_step(
             gas_composition=y.copy(),
             vapor_fraction=nv,
             cumulative_gas=cumulative_gas,
+            liquid_moles_remaining=n_liquid_new,
         ),
         x.copy(),  # New liquid composition
         n_liquid_new,  # Updated liquid moles
