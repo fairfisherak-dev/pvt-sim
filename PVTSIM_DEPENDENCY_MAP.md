@@ -109,7 +109,7 @@ For each active slice, include:
 
 ### Current active slices
 - directive / task name: canonical pvtapp shell + desktop contract baseline
-  owner / lane: Ole + Codex on `feat/stability-analysis-api`
+  owner / lane: Ole + Codex on `main`
   touched repo surfaces:
   - `.github/workflows/smoke.yml`
   - `.gitignore`
@@ -175,4 +175,4 @@ Do not run concurrent delegated work against the same repo surface unless the co
 - 2026-04-08: Initial controller-owned dependency-map scaffold created.
 - 2026-04-09: Recorded the active local pvtapp + packaging slice and flagged shared-surface coordination.
 - 2026-04-11: Expanded the active local slice to include `job_runner.py`, `capabilities.py`, and desktop contract alignment work.
-- 2026-04-11: Promoted the validated desktop-contract slice to the canonical baseline on `feat/stability-analysis-api`.
+- 2026-04-11: Promoted the validated desktop-contract slice to the canonical baseline on `main`.
