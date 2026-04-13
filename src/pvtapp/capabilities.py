@@ -29,20 +29,18 @@ GUI_CALCULATION_TYPE_LABELS: dict[CalculationType, str] = {
 
 RUNTIME_SUPPORTED_EOS_TYPES: tuple[EOSType, ...] = (
     EOSType.PENG_ROBINSON,
+    EOSType.SRK,
+    EOSType.PR78,
 )
 
-RUNTIME_UNSUPPORTED_EOS_MESSAGES: dict[EOSType, str] = {
-    EOSType.SRK: "EOS 'srk' is declared in the schema but is not implemented in pvtcore/eos",
-    EOSType.PR78: (
-        "EOS 'pr78' is not a standalone runtime EOS in the current codebase; "
-        "predictive PPR78 BIP wiring is not implemented"
-    ),
-}
+RUNTIME_UNSUPPORTED_EOS_MESSAGES: dict[EOSType, str] = {}
 
 GUI_SUPPORTED_EOS_TYPES: tuple[EOSType, ...] = RUNTIME_SUPPORTED_EOS_TYPES
 
 GUI_EOS_TYPE_LABELS: dict[EOSType, str] = {
     EOSType.PENG_ROBINSON: "Peng-Robinson (1976)",
+    EOSType.SRK: "Soave-Redlich-Kwong",
+    EOSType.PR78: "Peng-Robinson (1978)",
 }
 
 

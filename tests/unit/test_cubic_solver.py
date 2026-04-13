@@ -7,6 +7,7 @@ and validates root selection logic for EOS applications.
 import pytest
 import math
 from pvtcore.core.numerics.cubic_solver import (
+    eos_cubic_coefficients,
     solve_cubic,
     select_root,
     solve_cubic_eos,
@@ -247,6 +248,23 @@ class TestSolveCubicEOS:
         # Verify by solving manually
         roots_manual = solve_cubic(c2_expected, c1_expected, c0_expected)
         roots_eos = solve_cubic_eos(A, B, root_type="all")
+
+        assert len(roots_manual) == len(roots_eos)
+        for r_manual, r_eos in zip(roots_manual, roots_eos):
+            assert r_manual == pytest.approx(r_eos, abs=1e-10)
+
+    def test_generalized_srk_coefficients(self):
+        """Test generalized coefficient mapping for SRK."""
+        A = 1.0
+        B = 0.1
+        c2, c1, c0 = eos_cubic_coefficients(A, B, u=1.0, w=0.0)
+
+        assert c2 == pytest.approx(-1.0)
+        assert c1 == pytest.approx(A - B - B ** 2)
+        assert c0 == pytest.approx(-(A * B))
+
+        roots_manual = solve_cubic(c2, c1, c0)
+        roots_eos = solve_cubic_eos(A, B, root_type="all", u=1.0, w=0.0)
 
         assert len(roots_manual) == len(roots_eos)
         for r_manual, r_eos in zip(roots_manual, roots_eos):

@@ -17,6 +17,8 @@ import numpy as np
 
 from ..core.errors import CharacterizationError, CompositionError, ValidationError
 from ..models.component import Component, get_components_cached
+from .plus_splitting.katz import KatzSplitResult, split_plus_fraction_katz
+from .plus_splitting.lohrenz import LohrenzSplitResult, split_plus_fraction_lohrenz
 from .plus_splitting.pedersen import PedersenSplitResult, split_plus_fraction_pedersen
 from .scn_properties import SCNProperties, get_scn_properties
 from .pseudo_correlations import (
@@ -24,6 +26,9 @@ from .pseudo_correlations import (
     PseudoComponentCorrelation,
     RiaziDaubertCorrelation,
 )
+
+
+PlusFractionSplitResult = PedersenSplitResult | KatzSplitResult | LohrenzSplitResult
 
 
 @dataclass(frozen=True)
@@ -52,7 +57,7 @@ class CharacterizationConfig:
 
     n_end: int = 45
     extrapolate_scn: bool = True
-    split_method: str = "pedersen"
+    split_method: str = "pedersen"  # "pedersen", "katz", or "lohrenz"
     split_mw_model: str = "paraffin"  # "paraffin" (14n-4) or "table"
     normalize_composition: bool = True
     normalization_tol: float = 1e-6
@@ -106,7 +111,7 @@ class CharacterizationResult:
     composition: np.ndarray
     binary_interaction: np.ndarray
     scn_properties: SCNProperties | None = None
-    split_result: PedersenSplitResult | None = None
+    split_result: PlusFractionSplitResult | None = None
     plus_fraction: PlusFractionSpec | None = None
     lumping: SCNLumpingResult | None = None
 
@@ -165,6 +170,32 @@ def _resolve_correlation(
             return RiaziDaubertCorrelation(prefer_tb_form=False)
         raise CharacterizationError(f"Unknown pseudo-component correlation '{corr}'.")
     return corr
+
+
+def _resolve_scn_mw_fn(
+    *,
+    split_mw_model: str,
+    plus_fraction: PlusFractionSpec,
+    scn_props: SCNProperties,
+):
+    """Return the SCN molecular-weight mapping for the selected split MW model."""
+    if split_mw_model == "paraffin":
+        return None
+
+    if split_mw_model == "table":
+        n_start = plus_fraction.n_start
+
+        def scn_mw_fn(n: np.ndarray) -> np.ndarray:
+            idx = n.astype(int) - n_start
+            if np.any(idx < 0) or np.any(idx >= scn_props.mw.size):
+                raise CharacterizationError("SCN MW lookup out of range.")
+            return scn_props.mw[idx]
+
+        return scn_mw_fn
+
+    raise CharacterizationError(
+        f"Unknown split_mw_model '{split_mw_model}'. Use 'paraffin' or 'table'."
+    )
 
 
 def _build_kij_matrix(
@@ -413,24 +444,19 @@ def characterize_fluid(
             binary_interaction=kij,
         )
 
-    if cfg.split_method.lower() != "pedersen":
-        raise CharacterizationError(f"Unsupported split method '{cfg.split_method}'.")
-
     scn_props = get_scn_properties(
         n_start=plus_fraction.n_start,
         n_end=cfg.n_end,
         extrapolate=cfg.extrapolate_scn,
     )
 
-    if cfg.split_mw_model == "table":
-        n_start = plus_fraction.n_start
-
-        def scn_mw_fn(n: np.ndarray) -> np.ndarray:
-            idx = n.astype(int) - n_start
-            if np.any(idx < 0) or np.any(idx >= scn_props.mw.size):
-                raise CharacterizationError("SCN MW lookup out of range.")
-            return scn_props.mw[idx]
-
+    scn_mw_fn = _resolve_scn_mw_fn(
+        split_mw_model=cfg.split_mw_model,
+        plus_fraction=plus_fraction,
+        scn_props=scn_props,
+    )
+    split_method = cfg.split_method.strip().lower()
+    if split_method == "pedersen":
         split = split_plus_fraction_pedersen(
             z_plus=plus_fraction.z_plus,
             MW_plus=plus_fraction.mw_plus,
@@ -438,16 +464,26 @@ def characterize_fluid(
             n_end=cfg.n_end,
             scn_mw_fn=scn_mw_fn,
         )
-    elif cfg.split_mw_model == "paraffin":
-        split = split_plus_fraction_pedersen(
+    elif split_method == "katz":
+        split = split_plus_fraction_katz(
             z_plus=plus_fraction.z_plus,
             MW_plus=plus_fraction.mw_plus,
             n_start=plus_fraction.n_start,
             n_end=cfg.n_end,
+            scn_mw_fn=scn_mw_fn,
+        )
+    elif split_method == "lohrenz":
+        split = split_plus_fraction_lohrenz(
+            z_plus=plus_fraction.z_plus,
+            MW_plus=plus_fraction.mw_plus,
+            n_start=plus_fraction.n_start,
+            n_end=cfg.n_end,
+            scn_mw_fn=scn_mw_fn,
         )
     else:
         raise CharacterizationError(
-            f"Unknown split_mw_model '{cfg.split_mw_model}'. Use 'paraffin' or 'table'."
+            f"Unsupported split method '{cfg.split_method}'. "
+            "Use 'pedersen', 'katz', or 'lohrenz'."
         )
 
     corr = _resolve_correlation(cfg.correlation)

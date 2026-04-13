@@ -250,6 +250,20 @@ def _map_split_mw_model(mw_model: str) -> str:
     )
 
 
+def _map_split_method(method: str) -> str:
+    method_l = method.strip().lower()
+    if method_l in {"pedersen", "katz", "lohrenz"}:
+        return method_l
+    if method_l == "lohrens":
+        return "lohrenz"
+    raise ConfigurationError(
+        "Unsupported plus-fraction splitting method.",
+        config_key="fluid.plus_fraction.splitting.method",
+        value=method,
+        supported=["pedersen", "katz", "lohrenz"],
+    )
+
+
 def load_fluid_definition(path: str | Path) -> dict[str, Any]:
     """Load a fluid definition document from JSON (and YAML if available)."""
     path = Path(path)
@@ -377,14 +391,9 @@ def characterize_from_schema(doc: Mapping[str, Any]) -> CharacterizationResult:
         splitting = _get_optional(plus_block, "splitting", {})
         splitting = _as_mapping(splitting, "fluid.plus_fraction.splitting")
 
-        split_method = _as_str(_get_optional(splitting, "method", "pedersen"), "fluid.plus_fraction.splitting.method")
-        if split_method != "pedersen":
-            raise ConfigurationError(
-                "Unsupported plus-fraction splitting method.",
-                config_key="fluid.plus_fraction.splitting.method",
-                value=split_method,
-                supported=["pedersen"],
-            )
+        split_method = _map_split_method(
+            _as_str(_get_optional(splitting, "method", "pedersen"), "fluid.plus_fraction.splitting.method")
+        )
         cfg = replace(cfg, split_method=split_method)
 
         n_end = None

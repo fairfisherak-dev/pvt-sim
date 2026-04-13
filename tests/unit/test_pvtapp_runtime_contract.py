@@ -170,6 +170,7 @@ def _assert_resolved_plus_fraction(
     config: RunConfig,
     *,
     resolved_preset: str,
+    split_method: str,
     split_mw_model: str,
     max_carbon_number: int,
     lumping_n_groups: int,
@@ -179,6 +180,7 @@ def _assert_resolved_plus_fraction(
     assert plus_fraction.characterization_preset.value == "auto"
     assert plus_fraction.resolved_characterization_preset is not None
     assert plus_fraction.resolved_characterization_preset.value == resolved_preset
+    assert plus_fraction.split_method == split_method
     assert plus_fraction.split_mw_model == split_mw_model
     assert plus_fraction.max_carbon_number == max_carbon_number
     assert plus_fraction.lumping_enabled is True
@@ -361,10 +363,57 @@ def test_run_calculation_executes_pt_flash_with_plus_fraction_characterization()
     _assert_resolved_plus_fraction(
         result.config,
         resolved_preset="volatile_oil",
+        split_method="pedersen",
         split_mw_model="table",
         max_carbon_number=20,
         lumping_n_groups=6,
     )
+
+
+@pytest.mark.parametrize("split_method", ["katz", "lohrenz"])
+def test_run_calculation_executes_pt_flash_with_supported_manual_split_methods(
+    split_method: str,
+) -> None:
+    config = RunConfig.model_validate(
+        {
+            "run_name": f"PT Flash - {split_method} split",
+            "composition": {
+                "components": [
+                    {"component_id": "C1", "mole_fraction": 0.35},
+                    {"component_id": "C2", "mole_fraction": 0.20},
+                    {"component_id": "C3", "mole_fraction": 0.15},
+                ],
+                "plus_fraction": {
+                    "label": "C7+",
+                    "cut_start": 7,
+                    "z_plus": 0.30,
+                    "mw_plus_g_per_mol": 150.0,
+                    "sg_plus_60f": 0.82,
+                    "characterization_preset": "manual",
+                    "max_carbon_number": 20,
+                    "split_method": split_method,
+                    "split_mw_model": "table",
+                    "lumping_enabled": True,
+                    "lumping_n_groups": 6,
+                },
+            },
+            "calculation_type": "pt_flash",
+            "eos_type": "peng_robinson",
+            "pt_flash_config": {
+                "pressure_pa": 5.0e6,
+                "temperature_k": 350.0,
+            },
+        }
+    )
+
+    result = run_calculation(config=config, write_artifacts=False)
+
+    assert result.status == RunStatus.COMPLETED
+    assert result.pt_flash_result is not None
+    assert result.error_message is None
+    assert result.config.composition.plus_fraction is not None
+    assert result.config.composition.plus_fraction.characterization_preset.value == "manual"
+    assert result.config.composition.plus_fraction.split_method == split_method
 
 
 def test_run_calculation_executes_bubble_point_with_plus_fraction_characterization() -> None:
@@ -438,6 +487,7 @@ def test_run_calculation_auto_resolves_bubble_point_plus_fraction_policy() -> No
     assert plus_fraction is not None
     assert plus_fraction.characterization_preset.value == "auto"
     assert plus_fraction.resolved_characterization_preset.value == "volatile_oil"
+    assert plus_fraction.split_method == "pedersen"
     assert plus_fraction.split_mw_model == "table"
     assert plus_fraction.max_carbon_number == 20
     assert plus_fraction.lumping_enabled is True
@@ -487,6 +537,7 @@ def test_run_calculation_auto_resolves_dew_point_plus_fraction_policy() -> None:
     assert plus_fraction is not None
     assert plus_fraction.characterization_preset.value == "auto"
     assert plus_fraction.resolved_characterization_preset.value == "gas_condensate"
+    assert plus_fraction.split_method == "pedersen"
     assert plus_fraction.split_mw_model == "paraffin"
     assert plus_fraction.max_carbon_number == 18
     assert plus_fraction.lumping_enabled is True
@@ -518,6 +569,7 @@ def test_run_calculation_executes_cce_with_auto_plus_fraction_characterization()
     _assert_resolved_plus_fraction(
         result.config,
         resolved_preset="volatile_oil",
+        split_method="pedersen",
         split_mw_model="table",
         max_carbon_number=20,
         lumping_n_groups=6,
@@ -549,6 +601,7 @@ def test_run_calculation_executes_dl_with_auto_plus_fraction_characterization() 
     _assert_resolved_plus_fraction(
         result.config,
         resolved_preset="volatile_oil",
+        split_method="pedersen",
         split_mw_model="table",
         max_carbon_number=20,
         lumping_n_groups=6,
@@ -580,6 +633,7 @@ def test_run_calculation_executes_cvd_with_auto_plus_fraction_characterization()
     _assert_resolved_plus_fraction(
         result.config,
         resolved_preset="gas_condensate",
+        split_method="pedersen",
         split_mw_model="paraffin",
         max_carbon_number=18,
         lumping_n_groups=2,
@@ -614,6 +668,7 @@ def test_run_calculation_executes_separator_with_auto_plus_fraction_characteriza
     _assert_resolved_plus_fraction(
         result.config,
         resolved_preset="volatile_oil",
+        split_method="pedersen",
         split_mw_model="table",
         max_carbon_number=20,
         lumping_n_groups=6,
@@ -645,46 +700,43 @@ def test_run_calculation_executes_phase_envelope_with_auto_plus_fraction_charact
     _assert_resolved_plus_fraction(
         result.config,
         resolved_preset="gas_condensate",
+        split_method="pedersen",
         split_mw_model="paraffin",
         max_carbon_number=18,
         lumping_n_groups=2,
     )
 
 
-def test_validate_runtime_config_rejects_srk() -> None:
+def test_validate_runtime_config_accepts_srk() -> None:
     config = _pt_flash_config(eos_type="srk")
 
-    try:
-        validate_runtime_config(config)
-    except ValueError as exc:
-        assert str(exc) == "EOS 'srk' is declared in the schema but is not implemented in pvtcore/eos"
-    else:  # pragma: no cover - explicit contract failure
-        raise AssertionError("validate_runtime_config() accepted unsupported EOS 'srk'")
+    validate_runtime_config(config)
 
 
-def test_validate_runtime_config_rejects_pr78() -> None:
+def test_validate_runtime_config_accepts_pr78() -> None:
     config = _pt_flash_config(eos_type="pr78")
 
-    try:
-        validate_runtime_config(config)
-    except ValueError as exc:
-        assert str(exc) == (
-            "EOS 'pr78' is not a standalone runtime EOS in the current codebase; "
-            "predictive PPR78 BIP wiring is not implemented"
-        )
-    else:  # pragma: no cover - explicit contract failure
-        raise AssertionError("validate_runtime_config() accepted unsupported EOS 'pr78'")
+    validate_runtime_config(config)
 
 
-def test_run_calculation_fails_fast_for_unsupported_runtime_eos() -> None:
+def test_run_calculation_executes_pt_flash_for_pr78() -> None:
+    config = _pt_flash_config(eos_type="pr78")
+
+    result = run_calculation(config=config, write_artifacts=False)
+
+    assert result.status == RunStatus.COMPLETED
+    assert result.pt_flash_result is not None
+    assert result.error_message is None
+
+
+def test_run_calculation_executes_pt_flash_for_srk() -> None:
     config = _pt_flash_config(eos_type="srk")
 
     result = run_calculation(config=config, write_artifacts=False)
 
-    assert result.status == RunStatus.FAILED
-    assert result.error_message == (
-        "EOS 'srk' is declared in the schema but is not implemented in pvtcore/eos"
-    )
+    assert result.status == RunStatus.COMPLETED
+    assert result.pt_flash_result is not None
+    assert result.error_message is None
 
 
 class _CancelAfterDispatchCallback(ProgressCallback):
@@ -703,6 +755,22 @@ class _CancelAfterDispatchCallback(ProgressCallback):
 
     def is_cancelled(self) -> bool:
         return self._cancelled
+
+
+class _CancelAfterNChecksCallback(ProgressCallback):
+    """Simulate a user cancelling only after the solver has entered repeated checkpoints."""
+
+    def __init__(self, cancel_after_checks: int) -> None:
+        self.cancel_after_checks = cancel_after_checks
+        self.check_count = 0
+        self.cancelled_run_id: str | None = None
+
+    def on_cancelled(self, run_id: str) -> None:
+        self.cancelled_run_id = run_id
+
+    def is_cancelled(self) -> bool:
+        self.check_count += 1
+        return self.check_count >= self.cancel_after_checks
 
 
 def test_run_calculation_writes_cancelled_manifest_when_callback_requests_stop(
@@ -738,6 +806,43 @@ def test_run_calculation_writes_cancelled_manifest_when_callback_requests_stop(
     assert stored_result["error_message"] == "Calculation was cancelled by user"
     assert stored_result["pt_flash_result"] is None
 
+
+@pytest.mark.parametrize("tracing_method", ["continuation", "fixed_grid"])
+def test_run_calculation_cancels_mid_phase_envelope_trace(
+    tracing_method: str,
+) -> None:
+    config = RunConfig.model_validate(
+        {
+            "run_name": f"Phase Envelope - cancel {tracing_method}",
+            "composition": {
+                "components": [
+                    {"component_id": "C2", "mole_fraction": 0.5},
+                    {"component_id": "C3", "mole_fraction": 0.5},
+                ]
+            },
+            "calculation_type": "phase_envelope",
+            "eos_type": "peng_robinson",
+            "phase_envelope_config": {
+                "temperature_min_k": 325.0,
+                "temperature_max_k": 340.0,
+                "n_points": 10,
+                "tracing_method": tracing_method,
+            },
+        }
+    )
+    callback = _CancelAfterNChecksCallback(cancel_after_checks=6)
+
+    result = run_calculation(
+        config=config,
+        callback=callback,
+        write_artifacts=False,
+    )
+
+    assert result.status == RunStatus.CANCELLED
+    assert result.phase_envelope_result is None
+    assert result.error_message == "Calculation was cancelled by user"
+    assert callback.cancelled_run_id == result.run_id
+    assert callback.check_count >= callback.cancel_after_checks
 
 def test_load_run_config_reads_persisted_config_json(tmp_path: Path) -> None:
     config = _pt_flash_config()

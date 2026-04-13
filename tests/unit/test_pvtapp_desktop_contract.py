@@ -180,6 +180,7 @@ def _bubble_point_plus_fraction_config() -> RunConfig:
                     "sg_plus_60f": 0.82,
                     "characterization_preset": "manual",
                     "max_carbon_number": 20,
+                    "split_method": "katz",
                     "split_mw_model": "table",
                     "lumping_enabled": True,
                     "lumping_n_groups": 6,
@@ -388,6 +389,7 @@ def _plus_fraction_oil_composition() -> dict:
             "characterization_preset": "auto",
             "resolved_characterization_preset": "volatile_oil",
             "max_carbon_number": 20,
+            "split_method": "pedersen",
             "split_mw_model": "table",
             "lumping_enabled": True,
             "lumping_n_groups": 6,
@@ -418,6 +420,7 @@ def _plus_fraction_gas_composition() -> dict:
             "characterization_preset": "auto",
             "resolved_characterization_preset": "gas_condensate",
             "max_carbon_number": 18,
+            "split_method": "pedersen",
             "split_mw_model": "paraffin",
             "lumping_enabled": True,
             "lumping_n_groups": 2,
@@ -1039,6 +1042,46 @@ def test_main_window_offers_feed_normalization_instead_of_hard_failure(
     assert window.composition_widget.sum_label.text() == "1.000000"
 
 
+def test_main_window_recommend_setup_surfaces_family_and_eos(
+    window: PVTSimulatorWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    messages: list[tuple[str, str]] = []
+
+    def fake_information(_parent, title: str, message: str):
+        messages.append((title, message))
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "information", fake_information)
+
+    config = _run_config(
+        {
+            "composition": _plus_fraction_gas_composition(),
+            "calculation_type": "cvd",
+            "eos_type": "peng_robinson",
+            "cvd_config": {
+                "temperature_k": 320.0,
+                "dew_pressure_pa": 3906.418983182879,
+                "pressure_end_pa": 1500.0,
+                "n_steps": 5,
+            },
+        }
+    )
+    window.composition_widget.set_composition(config.composition)
+    window.conditions_widget.load_from_run_config(config)
+
+    window._recommend_setup()
+
+    assert messages
+    title, message = messages[-1]
+    assert title == "Setup Recommendation"
+    assert "Fluid family: Gas Condensate" in message
+    assert "Recommended EOS for this setup: Peng-Robinson (1978)" in message
+    assert "Current EOS: Peng-Robinson (1976)" in message
+    assert "Best first-line workflows for this fluid: Dew Point, CVD, Separator, Phase Envelope" in message
+    assert window.status_label.text() == "Recommendation ready"
+
+
 @pytest.mark.parametrize(
     ("name", "builder", "expected_header", "expected_text"),
     RESULT_BUILDERS,
@@ -1099,6 +1142,61 @@ def _summary_values(widget: ResultsTableWidget) -> dict[str, str]:
         for row in range(widget.summary_table.rowCount())
     }
 
+
+def test_results_table_captures_and_exports_compact_summary_rows(app: QApplication, tmp_path: Path) -> None:
+    table = ResultsTableWidget()
+
+    bubble_result = _bubble_point_result()
+    table.display_result(bubble_result)
+    bubble_summary = _summary_values(table)
+    table.capture_current_summary()
+
+    cce_result = _cce_result()
+    table.display_result(cce_result)
+    cce_summary = _summary_values(table)
+    table.capture_current_summary()
+
+    headers = [
+        table.captured_table.horizontalHeaderItem(column).text()
+        for column in range(table.captured_table.columnCount())
+    ]
+    assert table.captured_table.rowCount() == 2
+    assert "Bubble Pressure" in headers
+    assert "Saturation Pressure" in headers
+    assert "Temperature" in headers
+
+    csv_path = tmp_path / "captured-results.csv"
+    table._export_captured_csv(str(csv_path))
+    with csv_path.open(newline="", encoding="utf-8") as handle:
+        csv_rows = list(csv.DictReader(handle))
+    assert len(csv_rows) == 2
+    assert csv_rows[0]["Calculation"] == "Bubble Point"
+    assert csv_rows[0]["Temperature"] == bubble_summary["Temperature"]
+    assert csv_rows[0]["Bubble Pressure"] == bubble_summary["Bubble Pressure"]
+    assert csv_rows[1]["Calculation"] == "CCE"
+    assert csv_rows[1]["Temperature"] == cce_summary["Temperature"]
+    assert csv_rows[1]["Saturation Pressure"] == cce_summary["Saturation Pressure"]
+
+    json_path = tmp_path / "captured-results.json"
+    table._export_captured_json(str(json_path))
+    exported_json = json.loads(json_path.read_text(encoding="utf-8"))
+    assert exported_json[0]["Run ID"] == bubble_result.run_id
+    assert exported_json[1]["Run ID"] == cce_result.run_id
+
+    openpyxl = pytest.importorskip("openpyxl")
+    xlsx_path = tmp_path / "captured-results.xlsx"
+    table._export_captured_xlsx(str(xlsx_path))
+    workbook = openpyxl.load_workbook(xlsx_path)
+    sheet = workbook.active
+    exported_headers = [cell.value for cell in sheet[1]]
+    assert "Bubble Pressure" in exported_headers
+    assert "Saturation Pressure" in exported_headers
+    assert sheet.max_row == 3
+
+    table.clear()
+    assert table.captured_table.rowCount() == 2
+    table.clear(clear_captured=True)
+    assert table.captured_table.rowCount() == 0
 
 def test_results_table_scales_summary_columns_with_ui_zoom_without_shrinking_composition_data(
     app: QApplication,
@@ -1368,7 +1466,7 @@ def test_saturation_result_widgets_render_plus_fraction_lump_names(app: QApplica
     report = text.text.toPlainText()
 
     assert "C7+ characterization" in report
-    assert "Manual; split MW model table, split to C20, lumping on (6 groups)" in report
+    assert "Manual; split method katz, split MW model table, split to C20, lumping on (6 groups)" in report
     assert "LUMP1_C7_C9" in report
     assert "LUMP2_C10_C12" in report
 

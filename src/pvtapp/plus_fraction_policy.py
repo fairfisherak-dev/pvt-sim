@@ -25,6 +25,7 @@ from pvtapp.schemas import (
 class PlusFractionPresetSettings:
     """Concrete characterization settings for a validated family preset."""
 
+    split_method: str
     split_mw_model: str
     max_carbon_number: int
     lumping_enabled: bool
@@ -48,36 +49,42 @@ PLUS_FRACTION_PRESET_SETTINGS: Mapping[
     PlusFractionPresetSettings,
 ] = {
     PlusFractionCharacterizationPreset.DRY_GAS: PlusFractionPresetSettings(
+        split_method="pedersen",
         split_mw_model="table",
         max_carbon_number=11,
         lumping_enabled=True,
         lumping_n_groups=4,
     ),
     PlusFractionCharacterizationPreset.CO2_RICH_GAS: PlusFractionPresetSettings(
+        split_method="pedersen",
         split_mw_model="paraffin",
         max_carbon_number=11,
         lumping_enabled=True,
         lumping_n_groups=4,
     ),
     PlusFractionCharacterizationPreset.GAS_CONDENSATE: PlusFractionPresetSettings(
+        split_method="pedersen",
         split_mw_model="paraffin",
         max_carbon_number=18,
         lumping_enabled=True,
         lumping_n_groups=2,
     ),
     PlusFractionCharacterizationPreset.VOLATILE_OIL: PlusFractionPresetSettings(
+        split_method="pedersen",
         split_mw_model="table",
         max_carbon_number=20,
         lumping_enabled=True,
         lumping_n_groups=6,
     ),
     PlusFractionCharacterizationPreset.BLACK_OIL: PlusFractionPresetSettings(
+        split_method="pedersen",
         split_mw_model="table",
         max_carbon_number=20,
         lumping_enabled=True,
         lumping_n_groups=6,
     ),
     PlusFractionCharacterizationPreset.SOUR_OIL: PlusFractionPresetSettings(
+        split_method="pedersen",
         split_mw_model="table",
         max_carbon_number=20,
         lumping_enabled=True,
@@ -186,6 +193,7 @@ def resolve_plus_fraction_entry(
     payload = plus_fraction.model_dump(mode="python")
     payload.update(
         {
+            "split_method": settings.split_method,
             "split_mw_model": settings.split_mw_model,
             "max_carbon_number": settings.max_carbon_number,
             "lumping_enabled": settings.lumping_enabled,
@@ -217,6 +225,7 @@ def describe_plus_fraction_policy(
         lumping_txt = f"on ({plus_fraction.lumping_n_groups} groups)"
 
     return (
-        f"{prefix}; split MW model {plus_fraction.split_mw_model}, "
+        f"{prefix}; split method {plus_fraction.split_method}, "
+        f"split MW model {plus_fraction.split_mw_model}, "
         f"split to C{plus_fraction.max_carbon_number}, lumping {lumping_txt}"
     )

@@ -25,6 +25,7 @@ import numpy as np
 from pvtapp.schemas import (
     RunConfig, RunResult, RunManifest, RunStatus,
     CalculationType, EOSType, PhaseEnvelopeTracingMethod,
+    PlusFractionCharacterizationPreset,
     PTFlashResult, PhaseEnvelopeResult, PhaseEnvelopePoint,
     CCEResult, CCEStepResult,
     BubblePointResult, DewPointResult,
@@ -172,6 +173,80 @@ def _raise_if_cancelled(
     is_cancelled = getattr(callback, "is_cancelled", None)
     if callback is not None and callable(is_cancelled) and bool(is_cancelled()):
         raise CalculationCancelledError(message)
+
+
+_C2_TO_C6_IDS = ("C2", "C3", "IC4", "C4", "IC5", "C5", "C6")
+
+
+def _phase_envelope_component_fractions(config: RunConfig) -> Dict[str, float]:
+    """Resolve the feed into canonical component fractions for runtime family selection."""
+    from pvtcore.models import load_components, resolve_component_id
+
+    all_components = load_components()
+    fractions: Dict[str, float] = {}
+    inline_ids = {spec.component_id for spec in config.composition.inline_components}
+    for entry in config.composition.components:
+        raw_id = entry.component_id
+        if raw_id in inline_ids:
+            canonical_id = raw_id.strip().upper()
+        else:
+            try:
+                canonical_id = resolve_component_id(raw_id, all_components).upper()
+            except KeyError:
+                canonical_id = raw_id.strip().upper()
+        fractions[canonical_id] = fractions.get(canonical_id, 0.0) + float(entry.mole_fraction)
+    return fractions
+
+
+def _infer_phase_envelope_runtime_family(config: RunConfig) -> str:
+    """Classify the feed into the closest continuation runtime baseline family."""
+    plus_fraction = config.composition.plus_fraction
+    fractions = _phase_envelope_component_fractions(config)
+    methane = fractions.get("C1", 0.0)
+    co2 = fractions.get("CO2", 0.0)
+    h2s = fractions.get("H2S", 0.0)
+    acid = co2 + h2s
+    c2_to_c6 = sum(fractions.get(component_id, 0.0) for component_id in _C2_TO_C6_IDS)
+    plus_z = 0.0 if plus_fraction is None else float(plus_fraction.z_plus)
+
+    resolved_preset = None
+    if plus_fraction is not None:
+        resolved_preset = (
+            plus_fraction.resolved_characterization_preset
+            if plus_fraction.resolved_characterization_preset not in {
+                None,
+                PlusFractionCharacterizationPreset.AUTO,
+                PlusFractionCharacterizationPreset.MANUAL,
+            }
+            else None
+        )
+
+    if resolved_preset is PlusFractionCharacterizationPreset.CO2_RICH_GAS:
+        return "co2_rich_gas"
+    if resolved_preset is PlusFractionCharacterizationPreset.DRY_GAS:
+        return "dry_gas"
+    if resolved_preset is PlusFractionCharacterizationPreset.VOLATILE_OIL:
+        return "volatile_oil"
+    if resolved_preset is PlusFractionCharacterizationPreset.BLACK_OIL:
+        return "black_oil"
+    if resolved_preset is PlusFractionCharacterizationPreset.SOUR_OIL:
+        return "sour_oil"
+    if resolved_preset is PlusFractionCharacterizationPreset.GAS_CONDENSATE:
+        return "gas_condensate_heavy" if (plus_z >= 0.08 or c2_to_c6 >= 0.28) else "gas_condensate_light"
+
+    gas_like = methane >= 0.55 and plus_z <= 0.12
+    if gas_like:
+        if acid >= 0.20:
+            return "co2_rich_gas"
+        if plus_z >= 0.035 or c2_to_c6 >= 0.20:
+            return "gas_condensate_heavy" if (plus_z >= 0.08 or c2_to_c6 >= 0.28) else "gas_condensate_light"
+        return "dry_gas"
+
+    if h2s >= 0.05 or acid >= 0.10:
+        return "sour_oil"
+    if methane >= 0.25:
+        return "volatile_oil"
+    return "black_oil"
 
 
 # ==============================================================================
@@ -338,6 +413,8 @@ def execute_phase_envelope(
         ValueError: If configuration is invalid
         RuntimeError: If pvtcore raises an error
     """
+    config = _resolve_config_characterization(config)
+
     if callback:
         callback.on_progress(config.run_id or '', 0.1, "Loading components...")
 
@@ -348,6 +425,7 @@ def execute_phase_envelope(
 
     env_config = config.phase_envelope_config
     tracing_method = env_config.tracing_method
+    cancel_check = (lambda: _raise_if_cancelled(callback)) if callback is not None else None
 
     if callback:
         if tracing_method is PhaseEnvelopeTracingMethod.FIXED_GRID:
@@ -357,6 +435,14 @@ def execute_phase_envelope(
 
     if tracing_method is not PhaseEnvelopeTracingMethod.FIXED_GRID:
         from pvtcore.envelope import trace_envelope_continuation
+        from pvtcore.envelope.continuation import resolve_continuation_runtime_policy
+
+        fluid_family = _infer_phase_envelope_runtime_family(config)
+        continuation_policy = resolve_continuation_runtime_policy(fluid_family)
+        continuation_scan_points = max(
+            int(continuation_policy.n_pressure_points),
+            int(env_config.n_points) * 2,
+        )
 
         temperatures = np.linspace(
             env_config.temperature_min_k,
@@ -370,9 +456,9 @@ def execute_phase_envelope(
             components=components,
             eos=eos,
             binary_interaction=binary_interaction,
-            # Keep the continuation pressure scan above the coarse-grid regime
-            # that can misclassify upper-branch local roots near the critical region.
-            n_pressure_points=max(160, env_config.n_points * 4),
+            cancel_check=cancel_check,
+            n_pressure_points=continuation_scan_points,
+            runtime_policy=continuation_policy,
         )
         if not envelope.converged:
             raise RuntimeError(
@@ -453,6 +539,7 @@ def execute_phase_envelope(
         T_max=env_config.temperature_max_k,
         n_points=env_config.n_points,
         binary_interaction=binary_interaction,
+        cancel_check=cancel_check,
     )
 
     if callback:
@@ -695,6 +782,7 @@ def _load_component_inputs(config: RunConfig):
             ),
             config=CharacterizationConfig(
                 n_end=plus_fraction.max_carbon_number,
+                split_method=plus_fraction.split_method,
                 split_mw_model=plus_fraction.split_mw_model,
                 kij_default=0.0,
                 kij_overrides=override_entries,
@@ -719,10 +807,14 @@ def _load_component_inputs(config: RunConfig):
 
 def _build_runtime_eos(config: RunConfig, components):
     """Build the runtime EOS instance declared by the run config."""
-    from pvtcore.eos import PengRobinsonEOS
+    from pvtcore.eos import PR78EOS, PengRobinsonEOS, SRKEOS
 
     if config.eos_type == EOSType.PENG_ROBINSON:
         return PengRobinsonEOS(components)
+    if config.eos_type == EOSType.SRK:
+        return SRKEOS(components)
+    if config.eos_type == EOSType.PR78:
+        return PR78EOS(components)
 
     if config.eos_type in RUNTIME_UNSUPPORTED_EOS_MESSAGES:
         raise ValueError(RUNTIME_UNSUPPORTED_EOS_MESSAGES[config.eos_type])
@@ -1426,7 +1518,7 @@ def load_run_result(run_dir: Path) -> Optional[RunResult]:
 
 
 def load_run_config(run_dir: Path) -> Optional[RunConfig]:
-    """Load a RunConfig from a run directory.
+    """Load a persisted RunConfig from a run directory.
 
     Args:
         run_dir: Path to run directory
@@ -1446,11 +1538,15 @@ def load_run_config(run_dir: Path) -> Optional[RunConfig]:
         return None
 
 
-def build_rerun_config(config: RunConfig, run_name: Optional[str] = None) -> RunConfig:
-    """Return a replay-safe copy of a saved run configuration.
+def build_rerun_config(
+    config: RunConfig,
+    *,
+    run_name: Optional[str] = None,
+) -> RunConfig:
+    """Return a replay-safe config derived from a stored run configuration.
 
-    The rerun keeps the original calculation inputs but clears the old run ID so the
-    next execution gets a fresh artifact identity.
+    A rerun should preserve the computational inputs while clearing the prior
+    run identity so the next execution receives a fresh run id.
     """
     updates: Dict[str, Optional[str]] = {"run_id": None}
     if run_name is not None:
@@ -1460,15 +1556,16 @@ def build_rerun_config(config: RunConfig, run_name: Optional[str] = None) -> Run
 
 def rerun_saved_run(
     run_dir: Path,
+    *,
     output_dir: Optional[Path] = None,
     callback: Optional[ProgressCallback] = None,
     write_artifacts: bool = True,
     run_name: Optional[str] = None,
 ) -> RunResult:
-    """Reload a saved config.json and execute it again through the normal job runner."""
+    """Replay a prior run from its persisted config artifact."""
     config = load_run_config(run_dir)
     if config is None:
-        raise ValueError(f"No valid config.json found in saved run: {run_dir}")
+        raise ValueError(f"Could not load a valid config.json from run directory: {run_dir}")
 
     rerun_config = build_rerun_config(config, run_name=run_name)
     return run_calculation(

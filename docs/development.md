@@ -70,8 +70,7 @@ Current workflow surface exposed in the GUI/runtime, verified from
 
 Current runtime EOS surface:
 
-- implemented and exposed: `Peng-Robinson (1976)`
-- declared in schema but not implemented as runtime EOS: `SRK`, `PR78`
+- implemented and exposed: `Peng-Robinson (1976)`, `Peng-Robinson (1978)`, `SRK`
 
 ---
 
