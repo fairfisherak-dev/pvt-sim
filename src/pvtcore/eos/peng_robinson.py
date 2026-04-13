@@ -1,4 +1,4 @@
-"""Peng-Robinson equation of state implementation.
+"""Peng-Robinson (1976) equation of state implementation.
 
 Implementation of the Peng-Robinson EOS as presented in:
 Peng, D.-Y. and Robinson, D. B., "A New Two-Constant Equation of State",
@@ -30,7 +30,7 @@ BIPInput = Union[
 
 
 class PengRobinsonEOS(CubicEOS):
-    """Peng-Robinson equation of state.
+    """Peng-Robinson (1976) equation of state.
 
     The PR EOS equation:
         P = RT/(V-b) - a(T)/(V² + 2bV - b²)
@@ -45,8 +45,7 @@ class PengRobinsonEOS(CubicEOS):
     Parameters:
         - a_c = 0.45724 R²Tc²/Pc  (attraction parameter at critical point)
         - b = 0.07780 RTc/Pc  (repulsion parameter)
-        - κ = 0.37464 + 1.54226ω - 0.26992ω²  (for ω ≤ 0.49)
-        - κ = 0.379642 + 1.48503ω - 0.164423ω² + 0.016666ω³  (for ω > 0.49)
+        - κ = 0.37464 + 1.54226ω - 0.26992ω²
         - α(T) = [1 + κ(1 - √(T/Tc))]²
         - a(T) = a_c × α(T)
 
@@ -73,7 +72,7 @@ class PengRobinsonEOS(CubicEOS):
         Args:
             components: List of Component objects with Tc, Pc, omega properties
         """
-        super().__init__(components, name="Peng-Robinson")
+        super().__init__(components, name="Peng-Robinson (1976)")
 
         # PR-specific parameters
         self.u = 2.0
@@ -109,17 +108,11 @@ class PengRobinsonEOS(CubicEOS):
             )
 
             # κ parameter for alpha function
-            omega = comp.omega
-            if omega <= 0.49:
-                # Original PR correlation
-                self.kappa[i] = 0.37464 + 1.54226 * omega - 0.26992 * omega ** 2
-            else:
-                # Extended correlation for heavy components (Robinson & Peng, 1978)
-                self.kappa[i] = (
-                    0.379642 + 1.48503 * omega
-                    - 0.164423 * omega ** 2
-                    + 0.016666 * omega ** 3
-                )
+            self.kappa[i] = self._kappa_from_omega(comp.omega)
+
+    def _kappa_from_omega(self, omega: float) -> float:
+        """Return the classic Peng-Robinson (1976) kappa correlation."""
+        return 0.37464 + 1.54226 * omega - 0.26992 * omega ** 2
 
     def alpha_function(self, temperature: float, component_idx: int) -> float:
         """Calculate alpha function α(T) for a component.

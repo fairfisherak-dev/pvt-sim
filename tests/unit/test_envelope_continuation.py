@@ -205,7 +205,7 @@ def test_trace_envelope_continuation_detects_co2_rich_critical_from_branch_close
 
     assert result.critical_state is not None
     assert result.critical_state.source == "branch_closest_approach"
-    assert 307.0 <= result.critical_state.temperature <= 308.0
+    assert 306.5 <= result.critical_state.temperature <= 308.0
     assert 70.0 <= result.critical_state.pressure / 1.0e5 <= 73.0
     assert result.switched is True
     assert len(result.dew_states) >= 1

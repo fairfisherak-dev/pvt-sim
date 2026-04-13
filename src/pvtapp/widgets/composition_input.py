@@ -60,9 +60,12 @@ COMPONENT_COLUMN_SIDE_MARGIN = 6
 COMPONENT_COLUMN_MIN_WIDTH = 96
 COMPONENT_COLUMN_MAX_WIDTH = 140
 MOLE_FRACTION_COLUMN_MIN_WIDTH = 108
+SPECIAL_COMPONENT_CHOICES = ("C7+", "PSEUDO_PLUS")
 HEAVY_MODE_NONE = "none"
 HEAVY_MODE_PLUS = "plus_fraction"
 HEAVY_MODE_INLINE = "inline_pseudo"
+SPECIAL_ROW_PLUS = "plus_fraction_row"
+SPECIAL_ROW_INLINE = "inline_pseudo_row"
 SAVED_COMPOSITIONS_SETTINGS_KEY = "feeds/saved_compositions"
 SETTINGS_ORGANIZATION = "PVT-SIM"
 
@@ -154,6 +157,7 @@ class CompositionInputWidget(QWidget):
         self._settings = settings or QSettings(SETTINGS_ORGANIZATION, __app_name__)
         self._saved_compositions: Dict[str, dict] = {}
         self._loading_saved_composition = False
+        self._syncing_special_rows = False
         self._setup_ui()
         self._connect_signals()
         self._load_saved_compositions()
@@ -251,6 +255,9 @@ class CompositionInputWidget(QWidget):
         self.plus_z_edit = self._create_float_edit()
         self.plus_mw_edit = self._create_float_edit()
         self.plus_sg_edit = self._create_float_edit()
+        plus_fraction_hint = QLabel("Mole fraction is entered in the main Fluid Composition table.")
+        plus_fraction_hint.setWordWrap(True)
+        plus_fraction_hint.setStyleSheet("color: #9ca3af;")
         self.plus_characterization_preset = QComboBox()
         for preset in [
             PlusFractionCharacterizationPreset.AUTO,
@@ -269,6 +276,9 @@ class CompositionInputWidget(QWidget):
         self.plus_end_spin = QSpinBox()
         self.plus_end_spin.setRange(1, 200)
         self.plus_end_spin.setValue(45)
+        self.plus_split_method = QComboBox()
+        self.plus_split_method.addItems(["pedersen", "katz", "lohrenz"])
+        self.plus_split_method.setCurrentText("pedersen")
         self.plus_split_mw_model = QComboBox()
         self.plus_split_mw_model.addItems(["paraffin", "table"])
         self.plus_split_mw_model.setCurrentText("paraffin")
@@ -278,12 +288,13 @@ class CompositionInputWidget(QWidget):
         self.plus_lumping_groups_spin.setValue(8)
         plus_form.addRow("Label", self.plus_label_edit)
         plus_form.addRow("Cut Start", self.plus_cut_start_spin)
-        plus_form.addRow("z+", self.plus_z_edit)
+        plus_form.addRow(plus_fraction_hint)
         plus_form.addRow("MW+ (g/mol)", self.plus_mw_edit)
         plus_form.addRow("SG+ @60F", self.plus_sg_edit)
         plus_form.addRow("Characterization", self.plus_characterization_preset)
         plus_form.addRow("Resolved", self.plus_characterization_summary)
         plus_form.addRow("Split To", self.plus_end_spin)
+        plus_form.addRow("Split Method", self.plus_split_method)
         plus_form.addRow("Split MW Model", self.plus_split_mw_model)
         plus_form.addRow("Lumping", self.plus_lumping_enabled)
         plus_form.addRow("Lumping Groups", self.plus_lumping_groups_spin)
@@ -297,6 +308,9 @@ class CompositionInputWidget(QWidget):
         self.inline_formula_edit = QLineEdit("PSEUDO+")
         self.inline_z_edit = self._create_float_edit()
         self.inline_mw_edit = self._create_float_edit()
+        inline_fraction_hint = QLabel("Mole fraction is entered in the main Fluid Composition table.")
+        inline_fraction_hint.setWordWrap(True)
+        inline_fraction_hint.setStyleSheet("color: #9ca3af;")
         self.inline_tc_edit = self._create_float_edit()
         self.inline_tc_unit = QComboBox()
         self.inline_tc_unit.addItems([unit.value for unit in TemperatureUnit])
@@ -320,7 +334,7 @@ class CompositionInputWidget(QWidget):
         inline_form.addRow("Component ID", self.inline_component_id_edit)
         inline_form.addRow("Name", self.inline_name_edit)
         inline_form.addRow("Formula", self.inline_formula_edit)
-        inline_form.addRow("Mole Fraction", self.inline_z_edit)
+        inline_form.addRow(inline_fraction_hint)
         inline_form.addRow("MW (g/mol)", self.inline_mw_edit)
         inline_form.addRow("Tc", inline_tc_row)
         inline_form.addRow("Pc", inline_pc_row)
@@ -342,6 +356,215 @@ class CompositionInputWidget(QWidget):
         edit.setValidator(validator)
         return edit
 
+    @staticmethod
+    def _combo_special_role(combo: Optional[QComboBox]) -> Optional[str]:
+        if combo is None:
+            return None
+        role = combo.property("special_role")
+        return str(role) if isinstance(role, str) and role else None
+
+    def _component_picker_options(self) -> list[str]:
+        options = list(STANDARD_COMPONENTS)
+        for token in SPECIAL_COMPONENT_CHOICES:
+            if token not in options:
+                options.append(token)
+        return options
+
+    def _find_special_row(self, role: str) -> Optional[int]:
+        for row in range(self.table.rowCount()):
+            combo = self.table.cellWidget(row, 0)
+            if isinstance(combo, QComboBox) and self._combo_special_role(combo) == role:
+                return row
+        return None
+
+    def _find_row_by_component_id(self, component_id: str, *, include_special: bool = True) -> Optional[int]:
+        wanted = component_id.strip()
+        for row in range(self.table.rowCount()):
+            combo = self.table.cellWidget(row, 0)
+            if not isinstance(combo, QComboBox):
+                continue
+            if not include_special and self._combo_special_role(combo) is not None:
+                continue
+            if combo.currentText().strip() == wanted:
+                return row
+        return None
+
+    def _set_combo_text(self, combo: QComboBox, text: str) -> None:
+        previous = combo.blockSignals(True)
+        try:
+            combo.setCurrentText(text)
+        finally:
+            combo.blockSignals(previous)
+
+    def _set_special_row_role(self, row: int, role: Optional[str]) -> None:
+        combo = self.table.cellWidget(row, 0)
+        if isinstance(combo, QComboBox):
+            combo.setProperty("special_role", role)
+
+    def _row_fraction_text(self, row: int) -> str:
+        item = self.table.item(row, 1)
+        return item.text().strip() if item is not None else ""
+
+    def _row_fraction_value(self, row: int) -> float:
+        item = self.table.item(row, 1)
+        if item is None:
+            return 0.0
+        try:
+            return float(item.text())
+        except ValueError:
+            return 0.0
+
+    def _set_row_fraction(self, row: int, value: float) -> None:
+        item = self.table.item(row, 1)
+        if item is None:
+            item = QTableWidgetItem()
+            item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(row, 1, item)
+        previous = self.table.blockSignals(True)
+        try:
+            item.setText(f"{float(value):.6f}")
+        finally:
+            self.table.blockSignals(previous)
+
+    def _set_line_edit_text(self, edit: QLineEdit, text: str) -> None:
+        previous = edit.blockSignals(True)
+        try:
+            edit.setText(text)
+        finally:
+            edit.blockSignals(previous)
+
+    def _parse_optional_float(self, text: str) -> Optional[float]:
+        stripped = text.strip()
+        if not stripped:
+            return None
+        try:
+            return float(stripped)
+        except ValueError:
+            return None
+
+    def _ensure_special_component_row(
+        self,
+        *,
+        role: str,
+        component_id: str,
+        fraction: Optional[float],
+        force_fraction: bool = False,
+    ) -> Optional[int]:
+        normalized_id = component_id.strip()
+        if not normalized_id:
+            return None
+
+        row = self._find_special_row(role)
+        if row is None:
+            row = self._find_row_by_component_id(normalized_id, include_special=False)
+
+        if row is None:
+            self._add_component_row(
+                normalized_id,
+                0.0 if fraction is None else float(fraction),
+                special_role=role,
+            )
+            row = self.table.rowCount() - 1
+        else:
+            self._set_special_row_role(row, role)
+
+        combo = self.table.cellWidget(row, 0)
+        if isinstance(combo, QComboBox) and combo.currentText().strip() != normalized_id:
+            self._set_combo_text(combo, normalized_id)
+
+        if force_fraction and fraction is not None:
+            self._set_row_fraction(row, float(fraction))
+
+        return row
+
+    def _remove_special_component_row(self, role: str) -> None:
+        row = self._find_special_row(role)
+        if row is not None:
+            self.table.removeRow(row)
+
+    def _sync_hidden_heavy_fraction_fields_from_table(self) -> None:
+        if self._syncing_special_rows:
+            return
+        self._syncing_special_rows = True
+        try:
+            plus_row = self._find_special_row(SPECIAL_ROW_PLUS)
+            if plus_row is not None:
+                self._set_line_edit_text(self.plus_z_edit, self._row_fraction_text(plus_row))
+            elif self._get_heavy_mode() == HEAVY_MODE_PLUS:
+                self._set_line_edit_text(self.plus_z_edit, "")
+
+            inline_row = self._find_special_row(SPECIAL_ROW_INLINE)
+            if inline_row is not None:
+                self._set_line_edit_text(self.inline_z_edit, self._row_fraction_text(inline_row))
+            elif self._get_heavy_mode() == HEAVY_MODE_INLINE:
+                self._set_line_edit_text(self.inline_z_edit, "")
+        finally:
+            self._syncing_special_rows = False
+
+    def _sync_special_component_rows_from_fields(self, *, force_fraction: bool) -> None:
+        if self._syncing_special_rows:
+            return
+        self._syncing_special_rows = True
+        try:
+            mode = self._get_heavy_mode()
+            if mode == HEAVY_MODE_PLUS:
+                plus_fraction = self._parse_optional_float(self.plus_z_edit.text())
+                self._ensure_special_component_row(
+                    role=SPECIAL_ROW_PLUS,
+                    component_id=self.plus_label_edit.text().strip() or "C7+",
+                    fraction=plus_fraction,
+                    force_fraction=force_fraction,
+                )
+                self._remove_special_component_row(SPECIAL_ROW_INLINE)
+            elif mode == HEAVY_MODE_INLINE:
+                inline_fraction = self._parse_optional_float(self.inline_z_edit.text())
+                self._ensure_special_component_row(
+                    role=SPECIAL_ROW_INLINE,
+                    component_id=self.inline_component_id_edit.text().strip() or "PSEUDO_PLUS",
+                    fraction=inline_fraction,
+                    force_fraction=force_fraction,
+                )
+                self._remove_special_component_row(SPECIAL_ROW_PLUS)
+            else:
+                self._remove_special_component_row(SPECIAL_ROW_PLUS)
+                self._remove_special_component_row(SPECIAL_ROW_INLINE)
+        finally:
+            self._syncing_special_rows = False
+
+    def _maybe_activate_special_mode_from_table(self) -> None:
+        if self._get_heavy_mode() != HEAVY_MODE_NONE or self._syncing_special_rows:
+            return
+
+        if self._find_row_by_component_id("PSEUDO_PLUS", include_special=False) is not None:
+            index = self.heavy_mode.findData(HEAVY_MODE_INLINE)
+            if index >= 0:
+                self.heavy_mode.setCurrentIndex(index)
+            return
+
+        if self._find_row_by_component_id("C7+", include_special=False) is not None:
+            index = self.heavy_mode.findData(HEAVY_MODE_PLUS)
+            if index >= 0:
+                self.heavy_mode.setCurrentIndex(index)
+
+    def _on_plus_fraction_field_changed(self, *_args) -> None:
+        self._sync_special_component_rows_from_fields(force_fraction=True)
+        self._refresh_plus_characterization_preview()
+        self._update_sum()
+        self._mark_saved_selection_dirty()
+        self.composition_edited.emit()
+
+    def _on_plus_identifier_changed(self, *_args) -> None:
+        self._sync_special_component_rows_from_fields(force_fraction=False)
+
+    def _on_inline_fraction_field_changed(self, *_args) -> None:
+        self._sync_special_component_rows_from_fields(force_fraction=True)
+        self._update_sum()
+        self._mark_saved_selection_dirty()
+        self.composition_edited.emit()
+
+    def _on_inline_identifier_changed(self, *_args) -> None:
+        self._sync_special_component_rows_from_fields(force_fraction=False)
+
     def _get_heavy_mode(self) -> str:
         return str(self.heavy_mode.currentData())
 
@@ -354,6 +577,8 @@ class CompositionInputWidget(QWidget):
             self.heavy_stack.setCurrentIndex(2)
         else:
             self.heavy_stack.setCurrentIndex(0)
+        self._sync_special_component_rows_from_fields(force_fraction=False)
+        self._sync_hidden_heavy_fraction_fields_from_table()
         self._refresh_plus_characterization_preview()
         self._sync_plus_lumping_state()
         self._update_sum()
@@ -379,16 +604,19 @@ class CompositionInputWidget(QWidget):
 
     def _set_plus_controls_from_resolved_entry(self, plus_fraction: PlusFractionEntry) -> None:
         self.plus_end_spin.blockSignals(True)
+        self.plus_split_method.blockSignals(True)
         self.plus_split_mw_model.blockSignals(True)
         self.plus_lumping_enabled.blockSignals(True)
         self.plus_lumping_groups_spin.blockSignals(True)
         try:
             self.plus_end_spin.setValue(plus_fraction.max_carbon_number)
+            self.plus_split_method.setCurrentText(plus_fraction.split_method)
             self.plus_split_mw_model.setCurrentText(plus_fraction.split_mw_model)
             self.plus_lumping_enabled.setChecked(plus_fraction.lumping_enabled)
             self.plus_lumping_groups_spin.setValue(plus_fraction.lumping_n_groups)
         finally:
             self.plus_end_spin.blockSignals(False)
+            self.plus_split_method.blockSignals(False)
             self.plus_split_mw_model.blockSignals(False)
             self.plus_lumping_enabled.blockSignals(False)
             self.plus_lumping_groups_spin.blockSignals(False)
@@ -406,7 +634,8 @@ class CompositionInputWidget(QWidget):
                 return None, "Manual: edit split/lumping settings directly."
             settings = PLUS_FRACTION_PRESET_SETTINGS[preset]
             return None, (
-                f"{PLUS_FRACTION_PRESET_LABELS[preset]}; split MW model {settings.split_mw_model}, "
+                f"{PLUS_FRACTION_PRESET_LABELS[preset]}; split method {settings.split_method}, "
+                f"split MW model {settings.split_mw_model}, "
                 f"split to C{settings.max_carbon_number}, "
                 f"lumping {'on' if settings.lumping_enabled else 'off'}"
                 + (f" ({settings.lumping_n_groups} groups)" if settings.lumping_enabled else "")
@@ -427,6 +656,7 @@ class CompositionInputWidget(QWidget):
         if self._get_heavy_mode() != HEAVY_MODE_PLUS:
             self.plus_characterization_summary.setText("Not active")
             self.plus_end_spin.setEnabled(False)
+            self.plus_split_method.setEnabled(False)
             self.plus_split_mw_model.setEnabled(False)
             self.plus_lumping_enabled.setEnabled(False)
             self.plus_lumping_groups_spin.setEnabled(False)
@@ -442,21 +672,25 @@ class CompositionInputWidget(QWidget):
         elif not manual and preset in PLUS_FRACTION_PRESET_SETTINGS:
             settings = PLUS_FRACTION_PRESET_SETTINGS[preset]
             self.plus_end_spin.blockSignals(True)
+            self.plus_split_method.blockSignals(True)
             self.plus_split_mw_model.blockSignals(True)
             self.plus_lumping_enabled.blockSignals(True)
             self.plus_lumping_groups_spin.blockSignals(True)
             try:
                 self.plus_end_spin.setValue(settings.max_carbon_number)
+                self.plus_split_method.setCurrentText(settings.split_method)
                 self.plus_split_mw_model.setCurrentText(settings.split_mw_model)
                 self.plus_lumping_enabled.setChecked(settings.lumping_enabled)
                 self.plus_lumping_groups_spin.setValue(settings.lumping_n_groups)
             finally:
                 self.plus_end_spin.blockSignals(False)
+                self.plus_split_method.blockSignals(False)
                 self.plus_split_mw_model.blockSignals(False)
                 self.plus_lumping_enabled.blockSignals(False)
                 self.plus_lumping_groups_spin.blockSignals(False)
 
         self.plus_end_spin.setEnabled(manual)
+        self.plus_split_method.setEnabled(manual)
         self.plus_split_mw_model.setEnabled(manual)
         self.plus_lumping_enabled.setEnabled(manual)
         self._sync_plus_lumping_state()
@@ -488,13 +722,11 @@ class CompositionInputWidget(QWidget):
 
         for widget in [
             self.plus_label_edit,
-            self.plus_z_edit,
             self.plus_mw_edit,
             self.plus_sg_edit,
             self.inline_component_id_edit,
             self.inline_name_edit,
             self.inline_formula_edit,
-            self.inline_z_edit,
             self.inline_mw_edit,
             self.inline_tc_edit,
             self.inline_pc_edit,
@@ -505,9 +737,14 @@ class CompositionInputWidget(QWidget):
         for combo in [self.inline_tc_unit, self.inline_pc_unit]:
             combo.currentTextChanged.connect(self._on_cell_changed)
         self.plus_characterization_preset.currentIndexChanged.connect(self._on_cell_changed)
+        self.plus_split_method.currentTextChanged.connect(self._on_cell_changed)
         self.plus_split_mw_model.currentTextChanged.connect(self._on_cell_changed)
         self.plus_lumping_enabled.toggled.connect(self._sync_plus_lumping_state)
         self.plus_lumping_enabled.toggled.connect(self._on_cell_changed)
+        self.plus_label_edit.textChanged.connect(self._on_plus_identifier_changed)
+        self.plus_z_edit.textChanged.connect(self._on_plus_fraction_field_changed)
+        self.inline_component_id_edit.textChanged.connect(self._on_inline_identifier_changed)
+        self.inline_z_edit.textChanged.connect(self._on_inline_fraction_field_changed)
 
         for spin in [self.plus_cut_start_spin, self.plus_end_spin, self.plus_lumping_groups_spin]:
             spin.valueChanged.connect(self._on_cell_changed)
@@ -526,7 +763,7 @@ class CompositionInputWidget(QWidget):
         """Add a new empty row to the table."""
         self._add_component_row("", 0.0)
 
-    def _add_component_row(self, comp_id: str, fraction: float) -> None:
+    def _add_component_row(self, comp_id: str, fraction: float, *, special_role: Optional[str] = None) -> None:
         """Add a component row with values."""
         row = self.table.rowCount()
         self.table.insertRow(row)
@@ -534,7 +771,8 @@ class CompositionInputWidget(QWidget):
         # Component selector (combobox)
         combo = ClickSelectComboBox(ui_scale=self._ui_scale)
         combo.setEditable(True)
-        combo.addItems(STANDARD_COMPONENTS)
+        combo.addItems(self._component_picker_options())
+        combo.setProperty("special_role", special_role)
         if comp_id:
             idx = combo.findText(comp_id)
             if idx >= 0:
@@ -568,6 +806,7 @@ class CompositionInputWidget(QWidget):
             self.table.removeRow(row)
 
         self._sync_table_height()
+        self._sync_hidden_heavy_fraction_fields_from_table()
         self._update_sum()
         self.composition_edited.emit()
 
@@ -599,6 +838,7 @@ class CompositionInputWidget(QWidget):
         self.plus_sg_edit.clear()
         self.plus_characterization_preset.setCurrentIndex(0)
         self.plus_end_spin.setValue(45)
+        self.plus_split_method.setCurrentText("pedersen")
         self.plus_split_mw_model.setCurrentText("paraffin")
         self.plus_lumping_enabled.setChecked(False)
         self.plus_lumping_groups_spin.setValue(8)
@@ -654,6 +894,7 @@ class CompositionInputWidget(QWidget):
                 sg_plus_60f=sg_plus,
                 characterization_preset=self._current_plus_characterization_preset(),
                 max_carbon_number=self.plus_end_spin.value(),
+                split_method=self.plus_split_method.currentText(),
                 split_mw_model=self.plus_split_mw_model.currentText(),
                 lumping_enabled=self.plus_lumping_enabled.isChecked(),
                 lumping_n_groups=self.plus_lumping_groups_spin.value(),
@@ -743,17 +984,21 @@ class CompositionInputWidget(QWidget):
                     pass
         self.table.blockSignals(False)
 
-        if self._get_heavy_mode() == HEAVY_MODE_PLUS:
+        if self._get_heavy_mode() == HEAVY_MODE_PLUS and self._find_special_row(SPECIAL_ROW_PLUS) is None:
             z_plus, error = self._parse_float(self.plus_z_edit.text(), "Plus-fraction z+")
             if error is None and z_plus is not None:
                 self.plus_z_edit.setText(f"{float(z_plus) / total:.6f}")
-        elif self._get_heavy_mode() == HEAVY_MODE_INLINE:
+        elif self._get_heavy_mode() == HEAVY_MODE_INLINE and self._find_special_row(SPECIAL_ROW_INLINE) is None:
             z_inline, error = self._parse_float(self.inline_z_edit.text(), "Inline pseudo mole fraction")
             if error is None and z_inline is not None:
                 self.inline_z_edit.setText(f"{float(z_inline) / total:.6f}")
+        self._sync_hidden_heavy_fraction_fields_from_table()
 
     def _on_cell_changed(self, *args) -> None:
         """Handle cell value changes."""
+        self._maybe_activate_special_mode_from_table()
+        self._sync_special_component_rows_from_fields(force_fraction=False)
+        self._sync_hidden_heavy_fraction_fields_from_table()
         self._refresh_plus_characterization_preview()
         self._update_sum()
         self._mark_saved_selection_dirty()
@@ -966,11 +1211,11 @@ class CompositionInputWidget(QWidget):
                     pass
 
         plus_fraction, _ = self._get_plus_fraction_entry()
-        if plus_fraction is not None:
+        if plus_fraction is not None and self._find_special_row(SPECIAL_ROW_PLUS) is None:
             total += plus_fraction.z_plus
 
         inline_spec, inline_z, _ = self._get_inline_component_spec()
-        if inline_spec is not None and inline_z is not None:
+        if inline_spec is not None and inline_z is not None and self._find_special_row(SPECIAL_ROW_INLINE) is None:
             total += inline_z
         return total
 
@@ -1030,11 +1275,20 @@ class CompositionInputWidget(QWidget):
 
         Zero-fraction rows are treated as placeholders and ignored at runtime.
         """
-        return [
-            (comp_id, fraction)
-            for comp_id, fraction in self.get_components()
-            if abs(fraction) > COMPOSITION_SUM_TOLERANCE
-        ]
+        runtime_components: List[Tuple[str, float]] = []
+        for row in range(self.table.rowCount()):
+            combo = self.table.cellWidget(row, 0)
+            if isinstance(combo, QComboBox) and self._combo_special_role(combo) is not None:
+                continue
+            item = self.table.item(row, 1)
+            comp_id = combo.currentText().strip() if isinstance(combo, QComboBox) else ""
+            try:
+                fraction = float(item.text()) if item is not None else 0.0
+            except ValueError:
+                fraction = 0.0
+            if comp_id and abs(fraction) > COMPOSITION_SUM_TOLERANCE:
+                runtime_components.append((comp_id, fraction))
+        return runtime_components
 
     def _resolve_runtime_components(self) -> Tuple[List[Tuple[str, str, float]], Optional[str]]:
         """Resolve user-entered component IDs to canonical database IDs."""
@@ -1192,9 +1446,11 @@ class CompositionInputWidget(QWidget):
             if preset_index >= 0:
                 self.plus_characterization_preset.setCurrentIndex(preset_index)
             self.plus_end_spin.setValue(composition.plus_fraction.max_carbon_number)
+            self.plus_split_method.setCurrentText(composition.plus_fraction.split_method)
             self.plus_split_mw_model.setCurrentText(composition.plus_fraction.split_mw_model)
             self.plus_lumping_enabled.setChecked(composition.plus_fraction.lumping_enabled)
             self.plus_lumping_groups_spin.setValue(composition.plus_fraction.lumping_n_groups)
+            self._sync_special_component_rows_from_fields(force_fraction=True)
             self._refresh_plus_characterization_preview()
             self._sync_plus_lumping_state()
         elif composition.inline_components:
@@ -1215,7 +1471,9 @@ class CompositionInputWidget(QWidget):
             self.inline_pc_unit.setCurrentText(PressureUnit.PA.value)
             self.inline_pc_edit.setText(f"{spec.critical_pressure_pa:.6f}")
             self.inline_omega_edit.setText(f"{spec.omega:.6f}")
+            self._sync_special_component_rows_from_fields(force_fraction=True)
 
         self._sync_table_height()
+        self._sync_hidden_heavy_fraction_fields_from_table()
         self._update_sum()
         self.composition_edited.emit()

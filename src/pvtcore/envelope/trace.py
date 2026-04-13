@@ -7,7 +7,7 @@ It is intentionally separate from the continuation-method implementation in `pha
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -45,6 +45,7 @@ def _refine_upper_bubble_endpoint(
     components: List[Component],
     eos: CubicEOS,
     binary_interaction: Optional[NDArray[np.float64]],
+    cancel_check: Optional[Callable[[], None]] = None,
     T_success: float,
     P_success: float,
     T_fail: float,
@@ -59,6 +60,8 @@ def _refine_upper_bubble_endpoint(
     P_guess = float(P_success)
 
     for _ in range(int(max_refinements)):
+        if cancel_check is not None:
+            cancel_check()
         if (T_high - T_low) <= float(temperature_tol):
             break
 
@@ -106,6 +109,7 @@ def trace_phase_envelope(
     T_max: float,
     n_points: int = 50,
     binary_interaction: Optional[NDArray[np.float64]] = None,
+    cancel_check: Optional[Callable[[], None]] = None,
 ) -> TracedEnvelopeResult:
     """Trace bubble/dew curves on a fixed temperature grid.
 
@@ -150,6 +154,8 @@ def trace_phase_envelope(
     bubble_failure_T: Optional[float] = None
 
     for T in T_grid:
+        if cancel_check is not None:
+            cancel_check()
         try:
             br = calculate_bubble_point(
                 float(T),
@@ -235,6 +241,7 @@ def trace_phase_envelope(
             components=components,
             eos=eos,
             binary_interaction=binary_interaction,
+            cancel_check=cancel_check,
             T_success=float(bubble_T_list[-1]),
             P_success=float(bubble_P_list[-1]),
             T_fail=float(bubble_failure_T),
@@ -263,6 +270,9 @@ def trace_phase_envelope(
             "verify EOS and binary interaction parameters."
         )
 
+    if cancel_check is not None:
+        cancel_check()
+
     Tc, Pc = detect_critical_point(
         bubble_T=bubble_T,
         bubble_P=bubble_P,
@@ -282,6 +292,9 @@ def trace_phase_envelope(
 
     idx_t = int(np.argmax(dew_T))
     cricondentherm = (float(dew_T[idx_t]), float(dew_P[idx_t]))
+
+    if cancel_check is not None:
+        cancel_check()
 
     return TracedEnvelopeResult(
         bubble_T=bubble_T,

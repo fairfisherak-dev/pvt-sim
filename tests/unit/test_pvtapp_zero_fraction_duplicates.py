@@ -103,7 +103,7 @@ def test_unknown_component_ids_fail_widget_validation(app: QApplication) -> None
     widget = CompositionInputWidget()
     widget.table.setRowCount(0)
 
-    widget._add_component_row("C7+", 1.0)
+    widget._add_component_row("NOT_A_COMPONENT", 1.0)
 
     is_valid, message = widget.validate()
     assert is_valid is False
@@ -132,6 +132,7 @@ def test_plus_fraction_mode_contributes_to_total_and_returns_plus_fraction_schem
     assert composition.plus_fraction.sg_plus_60f == pytest.approx(0.82)
     assert composition.plus_fraction.characterization_preset.value == "auto"
     assert composition.plus_fraction.resolved_characterization_preset.value == "volatile_oil"
+    assert composition.plus_fraction.split_method == "pedersen"
     assert composition.plus_fraction.split_mw_model == "table"
     assert composition.plus_fraction.max_carbon_number == 20
     assert composition.plus_fraction.lumping_enabled is True
@@ -152,6 +153,7 @@ def test_plus_fraction_mode_round_trips_advanced_characterization_fields(app: QA
     widget.plus_mw_edit.setText("119.7876")
     widget.plus_sg_edit.setText("0.82")
     widget.plus_end_spin.setValue(20)
+    widget.plus_split_method.setCurrentText("lohrenz")
     widget.plus_split_mw_model.setCurrentText("table")
     widget.plus_lumping_enabled.setChecked(True)
     widget.plus_lumping_groups_spin.setValue(6)
@@ -163,6 +165,7 @@ def test_plus_fraction_mode_round_trips_advanced_characterization_fields(app: QA
     assert composition.plus_fraction.characterization_preset.value == "manual"
     assert composition.plus_fraction.resolved_characterization_preset is None
     assert composition.plus_fraction.max_carbon_number == 20
+    assert composition.plus_fraction.split_method == "lohrenz"
     assert composition.plus_fraction.split_mw_model == "table"
     assert composition.plus_fraction.lumping_enabled is True
     assert composition.plus_fraction.lumping_n_groups == 6
@@ -172,6 +175,7 @@ def test_plus_fraction_mode_round_trips_advanced_characterization_fields(app: QA
 
     assert reloaded.heavy_mode.currentData() == HEAVY_MODE_PLUS
     assert PlusFractionCharacterizationPreset(reloaded.plus_characterization_preset.currentData()).value == "manual"
+    assert reloaded.plus_split_method.currentText() == "lohrenz"
     assert reloaded.plus_split_mw_model.currentText() == "table"
     assert reloaded.plus_lumping_enabled.isChecked() is True
     assert reloaded.plus_lumping_groups_spin.value() == 6
@@ -202,6 +206,7 @@ def test_auto_plus_fraction_policy_tracks_workflow_context(app: QApplication) ->
     assert composition is not None
     assert composition.plus_fraction is not None
     assert composition.plus_fraction.resolved_characterization_preset.value == "gas_condensate"
+    assert composition.plus_fraction.split_method == "pedersen"
     assert composition.plus_fraction.split_mw_model == "paraffin"
     assert composition.plus_fraction.max_carbon_number == 18
     assert composition.plus_fraction.lumping_n_groups == 2

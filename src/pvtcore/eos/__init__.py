@@ -2,6 +2,8 @@
 
 from .base import CubicEOS, EOSResult
 from .peng_robinson import PengRobinsonEOS
+from .pr78 import PR78EOS
+from .srk import SRKEOS
 from .ppr78 import (
     BIPProvider,
     PPR78Calculator,
@@ -16,6 +18,8 @@ __all__ = [
     'CubicEOS',
     'EOSResult',
     'PengRobinsonEOS',
+    'PR78EOS',
+    'SRKEOS',
     # PPR78 predictive BIP
     'BIPProvider',
     'PPR78Calculator',

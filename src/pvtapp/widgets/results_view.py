@@ -4,6 +4,9 @@ Provides tabular and graphical display of calculation results
 with export capabilities.
 """
 
+import csv
+import json
+from datetime import datetime
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import Qt, Signal
@@ -61,6 +64,22 @@ def _format_temperature(value_k: float, unit: TemperatureUnit, *, precision: int
     return f"{temperature_from_k(value_k, unit):.{precision}f} {unit.value}"
 
 
+def _format_calculation_type_label(calculation_type) -> str:
+    """Render calculation-type labels for user-facing tables."""
+    value = calculation_type.value
+    labels = {
+        "pt_flash": "PT Flash",
+        "bubble_point": "Bubble Point",
+        "dew_point": "Dew Point",
+        "phase_envelope": "Phase Envelope",
+        "cce": "CCE",
+        "differential_liberation": "DL",
+        "cvd": "CVD",
+        "separator": "Separator",
+    }
+    return labels.get(value, value.replace("_", " ").title())
+
+
 class ResultsTableWidget(QWidget):
     """Widget for displaying calculation results in tabular form.
 
@@ -69,10 +88,13 @@ class ResultsTableWidget(QWidget):
     """
 
     export_requested = Signal(str)
+    CAPTURE_BASE_COLUMNS = ("Run ID", "Run", "Calculation", "Status", "Captured At")
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._current_result: Optional[RunResult] = None
+        self._captured_rows: list[dict[str, str]] = []
+        self._captured_columns: list[str] = list(self.CAPTURE_BASE_COLUMNS)
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -89,6 +111,10 @@ class ResultsTableWidget(QWidget):
         self.status_label = QLabel("")
         header_layout.addWidget(self.status_label)
         header_layout.addStretch()
+
+        self.capture_summary_btn = QPushButton("Capture Summary")
+        self.capture_summary_btn.clicked.connect(self.capture_current_summary)
+        header_layout.addWidget(self.capture_summary_btn)
 
         # Export buttons
         self.export_csv_btn = QPushButton("Export CSV")
@@ -123,9 +149,44 @@ class ResultsTableWidget(QWidget):
         self.details_table = QTableWidget()
         self.tabs.addTab(self.details_table, "Details")
 
-        layout.addWidget(self.tabs)
+        # Captured summary rows tab
+        self.captured_tab = QWidget()
+        captured_layout = QVBoxLayout(self.captured_tab)
+        captured_layout.setContentsMargins(0, 0, 0, 0)
 
-    def clear(self) -> None:
+        captured_header = QHBoxLayout()
+        self.captured_status_label = QLabel("Captured rows: 0")
+        self.captured_status_label.setStyleSheet("color: #9ca3af;")
+        captured_header.addWidget(self.captured_status_label)
+        captured_header.addStretch()
+
+        self.export_captured_csv_btn = QPushButton("Export Captured CSV")
+        self.export_captured_csv_btn.clicked.connect(self._prompt_export_captured_csv)
+        captured_header.addWidget(self.export_captured_csv_btn)
+
+        self.export_captured_json_btn = QPushButton("Export Captured JSON")
+        self.export_captured_json_btn.clicked.connect(self._prompt_export_captured_json)
+        captured_header.addWidget(self.export_captured_json_btn)
+
+        self.export_captured_excel_btn = QPushButton("Export Captured Excel")
+        self.export_captured_excel_btn.clicked.connect(self._prompt_export_captured_xlsx)
+        captured_header.addWidget(self.export_captured_excel_btn)
+
+        self.clear_captured_btn = QPushButton("Clear Captured")
+        self.clear_captured_btn.clicked.connect(self.clear_captured)
+        captured_header.addWidget(self.clear_captured_btn)
+
+        captured_layout.addLayout(captured_header)
+
+        self.captured_table = QTableWidget()
+        self.captured_table.setAlternatingRowColors(True)
+        captured_layout.addWidget(self.captured_table)
+        self.tabs.addTab(self.captured_tab, "Captured")
+
+        layout.addWidget(self.tabs)
+        self._refresh_captured_table()
+
+    def clear(self, *, clear_captured: bool = False) -> None:
         """Clear all result displays."""
         self._current_result = None
         self.run_id_label.setText("No results")
@@ -133,6 +194,8 @@ class ResultsTableWidget(QWidget):
         self.summary_table.setRowCount(0)
         self.composition_table.setRowCount(0)
         self.details_table.setRowCount(0)
+        if clear_captured:
+            self.clear_captured()
 
     def display_result(self, result: RunResult) -> None:
         """Display a calculation result.
@@ -175,6 +238,151 @@ class ResultsTableWidget(QWidget):
             self._display_separator(result.separator_result)
         else:
             self._display_error(result)
+
+    def capture_current_summary(self) -> None:
+        """Append or refresh the compact summary row for the current result."""
+        if self._current_result is None:
+            QMessageBox.warning(self, "No Results", "No result is loaded to capture.")
+            return
+        if self._current_result.status != RunStatus.COMPLETED:
+            QMessageBox.warning(
+                self,
+                "Capture Error",
+                "Only completed calculations can be captured into the compact summary table.",
+            )
+            return
+
+        row = self._current_summary_capture_row()
+        if row is None:
+            QMessageBox.warning(self, "Capture Error", "The current result has no summary values to capture.")
+            return
+
+        run_id = row["Run ID"]
+        for index, existing in enumerate(self._captured_rows):
+            if existing.get("Run ID") == run_id:
+                self._captured_rows[index] = row
+                break
+        else:
+            self._captured_rows.append(row)
+
+        for column in row:
+            if column not in self._captured_columns:
+                self._captured_columns.append(column)
+
+        self._refresh_captured_table()
+        self.tabs.setCurrentWidget(self.captured_tab)
+
+    def clear_captured(self) -> None:
+        """Remove all captured compact summary rows."""
+        self._captured_rows = []
+        self._captured_columns = list(self.CAPTURE_BASE_COLUMNS)
+        self._refresh_captured_table()
+
+    def _current_summary_capture_row(self) -> Optional[dict[str, str]]:
+        if self._current_result is None:
+            return None
+
+        row: dict[str, str] = {
+            "Run ID": self._current_result.run_id,
+            "Run": self._current_result.run_name or self._current_result.run_id,
+            "Calculation": _format_calculation_type_label(self._current_result.config.calculation_type),
+            "Status": self._current_result.status.value,
+            "Captured At": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+
+        for summary_row in range(self.summary_table.rowCount()):
+            prop_item = self.summary_table.item(summary_row, 0)
+            value_item = self.summary_table.item(summary_row, 1)
+            if prop_item is None or value_item is None:
+                continue
+            property_name = prop_item.text().strip()
+            if not property_name:
+                continue
+            row[property_name] = value_item.text().strip()
+
+        return row
+
+    def _refresh_captured_table(self) -> None:
+        self.captured_table.setColumnCount(len(self._captured_columns))
+        self.captured_table.setHorizontalHeaderLabels(self._captured_columns)
+        self.captured_table.setRowCount(len(self._captured_rows))
+
+        for row_index, row_data in enumerate(self._captured_rows):
+            for column_index, column_name in enumerate(self._captured_columns):
+                self.captured_table.setItem(
+                    row_index,
+                    column_index,
+                    QTableWidgetItem(row_data.get(column_name, "")),
+                )
+
+        self.captured_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        if self._captured_columns:
+            last_column = len(self._captured_columns) - 1
+            self.captured_table.horizontalHeader().setSectionResizeMode(last_column, QHeaderView.ResizeMode.Stretch)
+        self.captured_status_label.setText(f"Captured rows: {len(self._captured_rows)}")
+
+    def _prompt_export_captured_csv(self) -> None:
+        filename, _ = QFileDialog.getSaveFileName(self, "Export Captured CSV", "", "CSV Files (*.csv)")
+        if filename:
+            self._export_captured_csv(filename)
+
+    def _prompt_export_captured_json(self) -> None:
+        filename, _ = QFileDialog.getSaveFileName(self, "Export Captured JSON", "", "JSON Files (*.json)")
+        if filename:
+            self._export_captured_json(filename)
+
+    def _prompt_export_captured_xlsx(self) -> None:
+        filename, _ = QFileDialog.getSaveFileName(self, "Export Captured Excel", "", "Excel Files (*.xlsx)")
+        if filename:
+            self._export_captured_xlsx(filename)
+
+    def _ensure_captured_rows(self) -> bool:
+        if self._captured_rows:
+            return True
+        QMessageBox.warning(self, "No Captured Rows", "Capture at least one summary row before exporting.")
+        return False
+
+    def _export_captured_csv(self, filename: str) -> None:
+        if not self._ensure_captured_rows():
+            return
+        try:
+            with open(filename, "w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=self._captured_columns)
+                writer.writeheader()
+                writer.writerows(self._captured_rows)
+        except Exception as exc:
+            QMessageBox.critical(self, "Export Error", f"Failed to export captured CSV: {exc}")
+
+    def _export_captured_json(self, filename: str) -> None:
+        if not self._ensure_captured_rows():
+            return
+        try:
+            with open(filename, "w", encoding="utf-8") as handle:
+                json.dump(self._captured_rows, handle, indent=2)
+        except Exception as exc:
+            QMessageBox.critical(self, "Export Error", f"Failed to export captured JSON: {exc}")
+
+    def _export_captured_xlsx(self, filename: str) -> None:
+        if not self._ensure_captured_rows():
+            return
+        try:
+            from openpyxl import Workbook
+        except ImportError as exc:
+            QMessageBox.critical(self, "Export Error", f"openpyxl is required for Excel export: {exc}")
+            return
+
+        try:
+            workbook = Workbook()
+            worksheet = workbook.active
+            worksheet.title = "Captured Results"
+            worksheet.append(self._captured_columns)
+            for row in self._captured_rows:
+                worksheet.append([row.get(column, "") for column in self._captured_columns])
+            worksheet.freeze_panes = "A2"
+            worksheet.auto_filter.ref = worksheet.dimensions
+            workbook.save(filename)
+        except Exception as exc:
+            QMessageBox.critical(self, "Export Error", f"Failed to export captured Excel: {exc}")
 
     def _pt_flash_display_units(self) -> tuple[PressureUnit, TemperatureUnit]:
         """Return the preferred PT flash display units."""

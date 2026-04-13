@@ -7,7 +7,7 @@ import copy
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
-from pvtapp.job_runner import run_calculation
+from pvtapp.job_runner import _infer_phase_envelope_runtime_family, run_calculation
 from pvtapp.schemas import PhaseEnvelopeTracingMethod, RunConfig, RunStatus
 
 
@@ -132,3 +132,98 @@ def test_phase_envelope_workflow_fixed_grid_route_remains_available() -> None:
     assert result.status == RunStatus.COMPLETED
     assert result.phase_envelope_result is not None
     assert result.phase_envelope_result.tracing_method is PhaseEnvelopeTracingMethod.FIXED_GRID
+
+
+@pytest.mark.parametrize(
+    ("config_data", "expected_family"),
+    [
+        (
+            {
+                "run_name": "Dry gas baseline",
+                "composition": {
+                    "components": [
+                        {"component_id": "N2", "mole_fraction": 0.01},
+                        {"component_id": "CO2", "mole_fraction": 0.02},
+                        {"component_id": "C1", "mole_fraction": 0.82},
+                        {"component_id": "C2", "mole_fraction": 0.08},
+                        {"component_id": "C3", "mole_fraction": 0.04},
+                        {"component_id": "C4", "mole_fraction": 0.03},
+                    ],
+                },
+                "calculation_type": "phase_envelope",
+                "eos_type": "peng_robinson",
+                "phase_envelope_config": {
+                    "temperature_min_k": 200.0,
+                    "temperature_max_k": 360.0,
+                    "n_points": 12,
+                    "tracing_method": "continuation",
+                },
+            },
+            "dry_gas",
+        ),
+        (
+            {
+                "run_name": "Light condensate baseline",
+                "composition": {
+                        "components": [
+                            {"component_id": "CO2", "mole_fraction": 0.02},
+                            {"component_id": "C1", "mole_fraction": 0.71},
+                            {"component_id": "C2", "mole_fraction": 0.09},
+                            {"component_id": "C3", "mole_fraction": 0.06},
+                            {"component_id": "C4", "mole_fraction": 0.03},
+                            {"component_id": "C5", "mole_fraction": 0.03},
+                            {"component_id": "C6", "mole_fraction": 0.02},
+                            {"component_id": "C7", "mole_fraction": 0.04},
+                        ],
+                    },
+                "calculation_type": "phase_envelope",
+                "eos_type": "peng_robinson",
+                "phase_envelope_config": {
+                    "temperature_min_k": 240.0,
+                    "temperature_max_k": 420.0,
+                    "n_points": 12,
+                    "tracing_method": "continuation",
+                },
+            },
+            "gas_condensate_light",
+        ),
+        (
+            {
+                "run_name": "Heavy condensate baseline",
+                "composition": {
+                    "components": [
+                        {"component_id": "CO2", "mole_fraction": 0.02},
+                        {"component_id": "C1", "mole_fraction": 0.62},
+                        {"component_id": "C2", "mole_fraction": 0.10},
+                        {"component_id": "C3", "mole_fraction": 0.08},
+                        {"component_id": "C4", "mole_fraction": 0.05},
+                        {"component_id": "C5", "mole_fraction": 0.04},
+                    ],
+                    "plus_fraction": {
+                        "label": "C7+",
+                        "z_plus": 0.09,
+                        "mw_plus_g_per_mol": 165.0,
+                        "sg_plus_60f": 0.78,
+                        "characterization_preset": "auto",
+                    },
+                },
+                "calculation_type": "phase_envelope",
+                "eos_type": "peng_robinson",
+                "phase_envelope_config": {
+                    "temperature_min_k": 240.0,
+                    "temperature_max_k": 440.0,
+                    "n_points": 12,
+                    "tracing_method": "continuation",
+                },
+            },
+            "gas_condensate_heavy",
+        ),
+    ],
+)
+def test_phase_envelope_runtime_family_selects_closest_baseline(
+    config_data: dict,
+    expected_family: str,
+) -> None:
+    """Continuation runtime should choose a narrow baseline family before tracing."""
+    config = RunConfig.model_validate(config_data)
+    assert _infer_phase_envelope_runtime_family(config) == expected_family

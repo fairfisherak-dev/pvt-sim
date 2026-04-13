@@ -14,7 +14,7 @@ development. It exposes two layers:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence
 
 import numpy as np
 from numpy.typing import NDArray
@@ -62,12 +62,150 @@ DEFAULT_MAX_LOG_PRESSURE_JUMP: float = 0.20
 DEFAULT_MAX_PHASE_COMPOSITION_JUMP: float = 0.15
 DEFAULT_MAX_K_VALUE_JUMP: float = 2.5
 DEFAULT_MIN_TEMPERATURE_STEP_K: float = 0.25
-DEFAULT_MAX_TEMPERATURE_STEP_K: float = 1.0
+DEFAULT_MAX_TEMPERATURE_STEP_K: float = 2.0
 DEFAULT_STEP_GROWTH: float = 1.35
 NEAR_TRIVIAL_PHASE_GAP: float = 1.0e-4
 NEAR_TRIVIAL_K_DEVIATION: float = 1.0e-4
+CRITICAL_COLLAPSE_PHASE_GAP: float = 0.035
+CRITICAL_COLLAPSE_K_DEVIATION: float = 0.40
+CRITICAL_REFINEMENT_PRESSURE_POINTS: int = 480
 ARCLENGTH_PHASE_GAP_THRESHOLD: float = 0.20
 ARCLENGTH_K_DEVIATION_THRESHOLD: float = 0.40
+
+
+@dataclass(frozen=True)
+class ContinuationRuntimePolicy:
+    """Runtime tuning profile for continuation tracing."""
+
+    name: str
+    n_pressure_points: int = DEFAULT_CONTINUATION_PRESSURE_POINTS
+    seed_window_log_span: float = DEFAULT_PRESSURE_WINDOW_LOG_SPAN
+    hint_window_log_span: float = DEFAULT_PRESSURE_WINDOW_LOG_SPAN
+    pressure_window_log_span: float = DEFAULT_PRESSURE_WINDOW_LOG_SPAN
+    bracket_window_log_span: float = 0.4
+    allow_full_rescan_on_advance: bool = True
+    use_predictive_pressure_hint: bool = True
+    min_temperature_step_k: float = DEFAULT_MIN_TEMPERATURE_STEP_K
+    max_temperature_step_k: float = DEFAULT_MAX_TEMPERATURE_STEP_K
+    step_growth: float = DEFAULT_STEP_GROWTH
+
+
+DEFAULT_CONTINUATION_RUNTIME_POLICY = ContinuationRuntimePolicy(name="generic")
+
+_CONTINUATION_RUNTIME_POLICIES = {
+    "generic": DEFAULT_CONTINUATION_RUNTIME_POLICY,
+    "dry_gas": ContinuationRuntimePolicy(
+        name="dry_gas",
+        n_pressure_points=80,
+        seed_window_log_span=0.45,
+        hint_window_log_span=0.40,
+        pressure_window_log_span=0.45,
+        bracket_window_log_span=0.25,
+        allow_full_rescan_on_advance=False,
+        min_temperature_step_k=0.50,
+        max_temperature_step_k=14.0,
+        step_growth=1.55,
+    ),
+    "gas_condensate_light": ContinuationRuntimePolicy(
+        name="gas_condensate_light",
+        n_pressure_points=88,
+        seed_window_log_span=0.50,
+        hint_window_log_span=0.45,
+        pressure_window_log_span=0.50,
+        bracket_window_log_span=0.28,
+        allow_full_rescan_on_advance=False,
+        min_temperature_step_k=0.40,
+        max_temperature_step_k=12.0,
+        step_growth=1.45,
+    ),
+    "gas_condensate_heavy": ContinuationRuntimePolicy(
+        name="gas_condensate_heavy",
+        n_pressure_points=104,
+        seed_window_log_span=0.58,
+        hint_window_log_span=0.52,
+        pressure_window_log_span=0.58,
+        bracket_window_log_span=0.32,
+        allow_full_rescan_on_advance=False,
+        min_temperature_step_k=0.35,
+        max_temperature_step_k=10.0,
+        step_growth=1.35,
+    ),
+    "volatile_oil": ContinuationRuntimePolicy(
+        name="volatile_oil",
+        n_pressure_points=96,
+        seed_window_log_span=0.60,
+        hint_window_log_span=0.55,
+        pressure_window_log_span=0.60,
+        bracket_window_log_span=0.35,
+        allow_full_rescan_on_advance=False,
+        min_temperature_step_k=0.35,
+        max_temperature_step_k=10.0,
+        step_growth=1.35,
+    ),
+    "black_oil": ContinuationRuntimePolicy(
+        name="black_oil",
+        n_pressure_points=104,
+        seed_window_log_span=0.65,
+        hint_window_log_span=0.60,
+        pressure_window_log_span=0.65,
+        bracket_window_log_span=0.38,
+        allow_full_rescan_on_advance=False,
+        min_temperature_step_k=0.35,
+        max_temperature_step_k=8.0,
+        step_growth=1.30,
+    ),
+    "sour_oil": ContinuationRuntimePolicy(
+        name="sour_oil",
+        n_pressure_points=112,
+        seed_window_log_span=0.68,
+        hint_window_log_span=0.62,
+        pressure_window_log_span=0.68,
+        bracket_window_log_span=0.40,
+        allow_full_rescan_on_advance=False,
+        min_temperature_step_k=0.35,
+        max_temperature_step_k=7.0,
+        step_growth=1.25,
+    ),
+    "co2_rich_gas": ContinuationRuntimePolicy(
+        name="co2_rich_gas",
+        n_pressure_points=192,
+        seed_window_log_span=0.75,
+        hint_window_log_span=0.72,
+        pressure_window_log_span=0.75,
+        bracket_window_log_span=0.35,
+        allow_full_rescan_on_advance=True,
+        min_temperature_step_k=0.25,
+        max_temperature_step_k=2.0,
+        step_growth=1.20,
+    ),
+}
+
+_CONTINUATION_RUNTIME_POLICY_ALIASES = {
+    "gas_condensate": "gas_condensate_light",
+    "gas_condensate_c7plus": "gas_condensate_heavy",
+    "volatile_oil_c7plus": "volatile_oil",
+    "co2_regression_gas": "co2_rich_gas",
+    "co2_rich_near_critical": "co2_rich_gas",
+}
+
+
+def resolve_continuation_runtime_policy(fluid_family: Optional[str]) -> ContinuationRuntimePolicy:
+    """Return the continuation tuning profile for one runtime fluid family."""
+    if fluid_family is None:
+        return DEFAULT_CONTINUATION_RUNTIME_POLICY
+
+    normalized = str(fluid_family).strip().lower().replace("-", "_").replace(" ", "_")
+    key = _CONTINUATION_RUNTIME_POLICY_ALIASES.get(normalized, normalized)
+    return _CONTINUATION_RUNTIME_POLICIES.get(key, DEFAULT_CONTINUATION_RUNTIME_POLICY)
+
+
+def _coerce_runtime_policy(
+    runtime_policy: Optional[ContinuationRuntimePolicy],
+) -> ContinuationRuntimePolicy:
+    """Return the active continuation policy, falling back to the generic runtime profile."""
+    if runtime_policy is None:
+        return DEFAULT_CONTINUATION_RUNTIME_POLICY
+    return runtime_policy
 
 
 @dataclass(frozen=True)
@@ -273,6 +411,104 @@ def _search_interval_for_nontrivial_boundary(
     for left, right in zip(samples, samples[1:]):
         if _sign_change_matches(branch, left.klass, right.klass):
             return ("bracket", float(left.pressure), float(right.pressure))
+
+    return None
+
+
+def _synthetic_point_bracket(branch: BranchName, pressure: float) -> RootBracket:
+    """Build a synthetic zero-width bracket for a directly resolved boundary point."""
+    pressure_bar = float(pressure) / 1.0e5
+    return RootBracket(
+        branch=branch,
+        pressure_lo_bar=pressure_bar,
+        pressure_hi_bar=pressure_bar,
+        class_lo=0,
+        class_hi=0,
+        trivial_lo=False,
+        trivial_hi=False,
+    )
+
+
+def _seek_local_candidate_near_pressure(
+    *,
+    branch: BranchName,
+    pressure_center: float,
+    temperature: float,
+    composition: NDArray[np.float64],
+    eos: CubicEOS,
+    binary_interaction: Optional[NDArray[np.float64]],
+    log_span: float,
+    n_expansions: int = 12,
+) -> Optional[ContinuationState]:
+    """Try to certify a nearby boundary with a small local search around one pressure guess."""
+    if not np.isfinite(float(pressure_center)) or float(pressure_center) <= 0.0:
+        return None
+
+    pressure_min, pressure_max = _pressure_window(float(pressure_center), log_span=log_span)
+    if pressure_max <= pressure_min:
+        return None
+
+    span_ratio = max(float(np.exp(log_span)), 1.0001)
+    ratios = np.geomspace(1.0, span_ratio, max(int(n_expansions), 3))
+    candidate_pressures = [float(pressure_center)]
+    for ratio in ratios:
+        candidate_pressures.append(max(float(pressure_min), float(pressure_center) / float(ratio)))
+        candidate_pressures.append(min(float(pressure_max), float(pressure_center) * float(ratio)))
+
+    unique_pressures: List[float] = []
+    for pressure in sorted(candidate_pressures):
+        if not unique_pressures or abs(np.log(pressure / unique_pressures[-1])) > 1.0e-6:
+            unique_pressures.append(float(pressure))
+
+    samples = [
+        _classify_branch_point(
+            branch=branch,
+            pressure=float(pressure),
+            temperature=float(temperature),
+            composition=composition,
+            eos=eos,
+            binary_interaction=binary_interaction,
+        )
+        for pressure in unique_pressures
+    ]
+
+    for sample in samples:
+        if sample.klass == 0 and not sample.trivial:
+            try:
+                return _build_state(
+                    branch=branch,
+                    pressure=float(sample.pressure),
+                    temperature=float(temperature),
+                    composition=composition,
+                    eos=eos,
+                    binary_interaction=binary_interaction,
+                    bracket=_synthetic_point_bracket(branch, float(sample.pressure)),
+                )
+            except PhaseError:
+                continue
+
+    for left, right in zip(samples, samples[1:]):
+        if not _sign_change_matches(branch, left.klass, right.klass):
+            continue
+        try:
+            return _resolve_local_bracket(
+                branch=branch,
+                bracket=RootBracket(
+                    branch=branch,
+                    pressure_lo_bar=float(left.pressure) / 1.0e5,
+                    pressure_hi_bar=float(right.pressure) / 1.0e5,
+                    class_lo=int(left.klass),
+                    class_hi=int(right.klass),
+                    trivial_lo=bool(left.trivial),
+                    trivial_hi=bool(right.trivial),
+                ),
+                temperature=float(temperature),
+                composition=composition,
+                eos=eos,
+                binary_interaction=binary_interaction,
+            )
+        except PhaseError:
+            continue
 
     return None
 
@@ -515,6 +751,7 @@ def resolve_local_branch_candidates(
     n_pressure_points: int = DEFAULT_CONTINUATION_PRESSURE_POINTS,
     pressure_min: Optional[float] = None,
     pressure_max: Optional[float] = None,
+    cancel_check: Optional[Callable[[], None]] = None,
 ) -> List[ContinuationState]:
     """Resolve all certified local saturation candidates at one temperature."""
     z = np.asarray(composition, dtype=np.float64)
@@ -530,6 +767,8 @@ def resolve_local_branch_candidates(
         pressure_min=float(pressure_min) if pressure_min is not None else PRESSURE_MIN,
         pressure_max=float(pressure_max) if pressure_max is not None else PRESSURE_MAX,
     ):
+        if cancel_check is not None:
+            cancel_check()
         try:
             candidates.append(
                 _resolve_local_bracket(
@@ -615,6 +854,30 @@ def _continuation_score(previous: ContinuationState, candidate: ContinuationStat
     )
 
 
+def _candidate_collapses_to_critical_junction(candidate: ContinuationState) -> bool:
+    """Return True when a step should stop at the critical handoff neighborhood."""
+    return (
+        _state_phase_gap(candidate) <= CRITICAL_COLLAPSE_PHASE_GAP
+        and _state_k_deviation(candidate) <= CRITICAL_COLLAPSE_K_DEVIATION
+    )
+
+
+def _accept_advanced_candidate(
+    candidate: ContinuationState,
+    *,
+    temperature: float,
+) -> ContinuationState:
+    """Reject candidates that have already collapsed into the critical junction."""
+    if candidate.branch == "bubble" and _candidate_collapses_to_critical_junction(candidate):
+        raise PhaseError(
+            "Continuation branch collapsed into the critical junction neighborhood.",
+            pressure=float(candidate.pressure),
+            temperature=float(temperature),
+            reason="no_local_root_candidates",
+        )
+    return candidate
+
+
 def _select_candidate(
     *,
     candidates: Sequence[ContinuationState],
@@ -674,8 +937,11 @@ def seed_continuation_state(
     max_log_pressure_jump: float = DEFAULT_MAX_LOG_PRESSURE_JUMP,
     max_phase_composition_jump: float = DEFAULT_MAX_PHASE_COMPOSITION_JUMP,
     max_k_value_jump: float = DEFAULT_MAX_K_VALUE_JUMP,
+    runtime_policy: Optional[ContinuationRuntimePolicy] = None,
+    cancel_check: Optional[Callable[[], None]] = None,
 ) -> ContinuationState:
     """Seed a continuation branch from certified local roots at one temperature."""
+    policy = _coerce_runtime_policy(runtime_policy)
     z = np.asarray(composition, dtype=np.float64)
     if pressure_seed is None:
         if branch == "bubble":
@@ -707,15 +973,16 @@ def seed_continuation_state(
         binary_interaction=binary_interaction,
         n_pressure_points=n_pressure_points,
         pressure_min=(
-            _pressure_window(float(pressure_seed))[0]
+            _pressure_window(float(pressure_seed), log_span=policy.seed_window_log_span)[0]
             if pressure_seed is not None
             else None
         ),
         pressure_max=(
-            _pressure_window(float(pressure_seed))[1]
+            _pressure_window(float(pressure_seed), log_span=policy.seed_window_log_span)[1]
             if pressure_seed is not None
             else None
         ),
+        cancel_check=cancel_check,
     )
     if not candidates and pressure_seed is not None:
         candidates = resolve_local_branch_candidates(
@@ -725,6 +992,7 @@ def seed_continuation_state(
             eos=eos,
             binary_interaction=binary_interaction,
             n_pressure_points=n_pressure_points,
+            cancel_check=cancel_check,
         )
     return _select_candidate(
         candidates=candidates,
@@ -747,14 +1015,51 @@ def advance_continuation_state(
     max_phase_composition_jump: float = DEFAULT_MAX_PHASE_COMPOSITION_JUMP,
     max_k_value_jump: float = DEFAULT_MAX_K_VALUE_JUMP,
     pressure_hint: Optional[float] = None,
+    runtime_policy: Optional[ContinuationRuntimePolicy] = None,
+    cancel_check: Optional[Callable[[], None]] = None,
 ) -> ContinuationState:
     """Advance one continuation branch to the next temperature."""
+    policy = _coerce_runtime_policy(runtime_policy)
+    use_arclength_region = (
+        pressure_hint is not None
+        and np.isfinite(pressure_hint)
+        and _should_use_arclength(previous_state)
+    )
     if pressure_hint is not None and np.isfinite(pressure_hint):
-        hint_min, hint_max = _pressure_window(float(pressure_hint))
+        hint_min, hint_max = _pressure_window(
+            float(pressure_hint),
+            log_span=policy.hint_window_log_span,
+        )
     else:
         hint_min, hint_max = None, None
 
     if hint_min is not None:
+        local_candidate = _seek_local_candidate_near_pressure(
+            branch=previous_state.branch,
+            pressure_center=float(pressure_hint),
+            temperature=float(temperature),
+            composition=np.asarray(composition, dtype=np.float64),
+            eos=eos,
+            binary_interaction=binary_interaction,
+            log_span=policy.hint_window_log_span,
+        )
+        if local_candidate is not None:
+            try:
+                local_candidate = _select_candidate(
+                    candidates=[local_candidate],
+                    previous_state=previous_state,
+                    max_log_pressure_jump=max_log_pressure_jump,
+                    max_phase_composition_jump=max_phase_composition_jump,
+                    max_k_value_jump=max_k_value_jump,
+                )
+                return _accept_advanced_candidate(
+                    local_candidate,
+                    temperature=float(temperature),
+                )
+            except PhaseError as exc:
+                if exc.details.get("reason") not in {"branch_family_lost"}:
+                    raise
+
         candidates = resolve_local_branch_candidates(
             branch=previous_state.branch,
             temperature=float(temperature),
@@ -764,45 +1069,55 @@ def advance_continuation_state(
             n_pressure_points=n_pressure_points,
             pressure_min=hint_min,
             pressure_max=hint_max,
+            cancel_check=cancel_check,
         )
         if candidates:
             try:
-                return _select_candidate(
+                candidate = _select_candidate(
                     candidates=candidates,
                     previous_state=previous_state,
                     max_log_pressure_jump=max_log_pressure_jump,
                     max_phase_composition_jump=max_phase_composition_jump,
                     max_k_value_jump=max_k_value_jump,
                 )
+                return _accept_advanced_candidate(
+                    candidate,
+                    temperature=float(temperature),
+                )
             except PhaseError as exc:
                 if exc.details.get("reason") not in {"branch_family_lost"}:
                     raise
 
-    bracket_min, bracket_max = _bracket_window(previous_state.bracket)
-    candidates = resolve_local_branch_candidates(
+    pressure_min, pressure_max = _pressure_window(
+        previous_state.pressure,
+        log_span=policy.pressure_window_log_span,
+    )
+    local_candidate = _seek_local_candidate_near_pressure(
         branch=previous_state.branch,
+        pressure_center=float(previous_state.pressure),
         temperature=float(temperature),
         composition=np.asarray(composition, dtype=np.float64),
         eos=eos,
         binary_interaction=binary_interaction,
-        n_pressure_points=n_pressure_points,
-        pressure_min=bracket_min,
-        pressure_max=bracket_max,
+        log_span=policy.pressure_window_log_span,
     )
-    if candidates:
+    if local_candidate is not None:
         try:
-            return _select_candidate(
-                candidates=candidates,
+            local_candidate = _select_candidate(
+                candidates=[local_candidate],
                 previous_state=previous_state,
                 max_log_pressure_jump=max_log_pressure_jump,
                 max_phase_composition_jump=max_phase_composition_jump,
                 max_k_value_jump=max_k_value_jump,
             )
+            return _accept_advanced_candidate(
+                local_candidate,
+                temperature=float(temperature),
+            )
         except PhaseError as exc:
             if exc.details.get("reason") not in {"branch_family_lost"}:
                 raise
 
-    pressure_min, pressure_max = _pressure_window(previous_state.pressure)
     candidates = resolve_local_branch_candidates(
         branch=previous_state.branch,
         temperature=float(temperature),
@@ -812,8 +1127,30 @@ def advance_continuation_state(
         n_pressure_points=n_pressure_points,
         pressure_min=pressure_min,
         pressure_max=pressure_max,
+        cancel_check=cancel_check,
     )
-    if not candidates:
+    if candidates:
+        try:
+            candidate = _select_candidate(
+                candidates=candidates,
+                previous_state=previous_state,
+                max_log_pressure_jump=max_log_pressure_jump,
+                max_phase_composition_jump=max_phase_composition_jump,
+                max_k_value_jump=max_k_value_jump,
+            )
+            return _accept_advanced_candidate(
+                candidate,
+                temperature=float(temperature),
+            )
+        except PhaseError as exc:
+            if exc.details.get("reason") not in {"branch_family_lost"}:
+                raise
+
+    if not use_arclength_region:
+        bracket_min, bracket_max = _bracket_window(
+            previous_state.bracket,
+            padding_log_span=policy.bracket_window_log_span,
+        )
         candidates = resolve_local_branch_candidates(
             branch=previous_state.branch,
             temperature=float(temperature),
@@ -821,13 +1158,47 @@ def advance_continuation_state(
             eos=eos,
             binary_interaction=binary_interaction,
             n_pressure_points=n_pressure_points,
+            pressure_min=bracket_min,
+            pressure_max=bracket_max,
+            cancel_check=cancel_check,
         )
-    return _select_candidate(
+        if candidates:
+            try:
+                candidate = _select_candidate(
+                    candidates=candidates,
+                    previous_state=previous_state,
+                    max_log_pressure_jump=max_log_pressure_jump,
+                    max_phase_composition_jump=max_phase_composition_jump,
+                    max_k_value_jump=max_k_value_jump,
+                )
+                return _accept_advanced_candidate(
+                    candidate,
+                    temperature=float(temperature),
+                )
+            except PhaseError as exc:
+                if exc.details.get("reason") not in {"branch_family_lost"}:
+                    raise
+
+    if not candidates and policy.allow_full_rescan_on_advance:
+        candidates = resolve_local_branch_candidates(
+            branch=previous_state.branch,
+            temperature=float(temperature),
+            composition=np.asarray(composition, dtype=np.float64),
+            eos=eos,
+            binary_interaction=binary_interaction,
+            n_pressure_points=n_pressure_points,
+            cancel_check=cancel_check,
+        )
+    candidate = _select_candidate(
         candidates=candidates,
         previous_state=previous_state,
         max_log_pressure_jump=max_log_pressure_jump,
         max_phase_composition_jump=max_phase_composition_jump,
         max_k_value_jump=max_k_value_jump,
+    )
+    return _accept_advanced_candidate(
+        candidate,
+        temperature=float(temperature),
     )
 
 
@@ -844,6 +1215,8 @@ def trace_branch_continuation(
     max_log_pressure_jump: float = DEFAULT_MAX_LOG_PRESSURE_JUMP,
     max_phase_composition_jump: float = DEFAULT_MAX_PHASE_COMPOSITION_JUMP,
     max_k_value_jump: float = DEFAULT_MAX_K_VALUE_JUMP,
+    runtime_policy: Optional[ContinuationRuntimePolicy] = None,
+    cancel_check: Optional[Callable[[], None]] = None,
 ) -> ContinuationTraceResult:
     """Trace one certified local branch family across a temperature sequence."""
     if len(temperatures) == 0:
@@ -878,6 +1251,8 @@ def trace_branch_continuation(
             max_log_pressure_jump=max_log_pressure_jump,
             max_phase_composition_jump=max_phase_composition_jump,
             max_k_value_jump=max_k_value_jump,
+            runtime_policy=runtime_policy,
+            cancel_check=cancel_check,
         )
         states.append(state)
     except PhaseError as exc:
@@ -890,6 +1265,8 @@ def trace_branch_continuation(
 
     previous = state
     for temperature in temps[1:]:
+        if cancel_check is not None:
+            cancel_check()
         try:
             previous = advance_continuation_state(
                 previous,
@@ -901,6 +1278,8 @@ def trace_branch_continuation(
                 max_log_pressure_jump=max_log_pressure_jump,
                 max_phase_composition_jump=max_phase_composition_jump,
                 max_k_value_jump=max_k_value_jump,
+                runtime_policy=runtime_policy,
+                cancel_check=cancel_check,
             )
             states.append(previous)
         except PhaseError as exc:
@@ -931,14 +1310,16 @@ def _adaptive_step_bounds(
     temperature_start: float,
     temperature_end: float,
     target_points: int,
+    runtime_policy: Optional[ContinuationRuntimePolicy] = None,
 ) -> tuple[float, float, float]:
     """Return initial/min/max temperature steps for adaptive tracing."""
+    policy = _coerce_runtime_policy(runtime_policy)
     span = max(abs(float(temperature_end) - float(temperature_start)), DEFAULT_MIN_TEMPERATURE_STEP_K)
     target = max(int(target_points), 2)
-    initial = max(DEFAULT_MIN_TEMPERATURE_STEP_K, span / float(target))
-    initial = min(initial, DEFAULT_MAX_TEMPERATURE_STEP_K)
-    minimum = max(DEFAULT_MIN_TEMPERATURE_STEP_K, initial / 8.0)
-    maximum = min(DEFAULT_MAX_TEMPERATURE_STEP_K, max(initial, 2.0 * initial))
+    initial = max(float(policy.min_temperature_step_k), span / float(target))
+    initial = min(initial, float(policy.max_temperature_step_k))
+    minimum = max(float(policy.min_temperature_step_k), initial / 8.0)
+    maximum = min(float(policy.max_temperature_step_k), max(initial, 2.0 * initial))
     return float(initial), float(minimum), float(maximum)
 
 
@@ -957,6 +1338,8 @@ def _seed_continuation_state_with_search(
     max_log_pressure_jump: float = DEFAULT_MAX_LOG_PRESSURE_JUMP,
     max_phase_composition_jump: float = DEFAULT_MAX_PHASE_COMPOSITION_JUMP,
     max_k_value_jump: float = DEFAULT_MAX_K_VALUE_JUMP,
+    runtime_policy: Optional[ContinuationRuntimePolicy] = None,
+    cancel_check: Optional[Callable[[], None]] = None,
 ) -> tuple[Optional[ContinuationState], Optional[str], Optional[float]]:
     """Seed a branch, searching forward in temperature if the first point has no root."""
     search_points = max(8, min(32, int(target_points) * 2))
@@ -964,6 +1347,8 @@ def _seed_continuation_state_with_search(
 
     last_exc: Optional[PhaseError] = None
     for temperature in temperatures:
+        if cancel_check is not None:
+            cancel_check()
         try:
             candidate = seed_continuation_state(
                 branch=branch,
@@ -977,6 +1362,8 @@ def _seed_continuation_state_with_search(
                 max_log_pressure_jump=max_log_pressure_jump,
                 max_phase_composition_jump=max_phase_composition_jump,
                 max_k_value_jump=max_k_value_jump,
+                runtime_policy=runtime_policy,
+                cancel_check=cancel_check,
             )
             candidate = _refine_seed_candidate(
                 candidate,
@@ -991,6 +1378,8 @@ def _seed_continuation_state_with_search(
                 max_log_pressure_jump=max_log_pressure_jump,
                 max_phase_composition_jump=max_phase_composition_jump,
                 max_k_value_jump=max_k_value_jump,
+                runtime_policy=runtime_policy,
+                cancel_check=cancel_check,
             )
             return (
                 candidate,
@@ -1018,6 +1407,8 @@ def _refine_seed_candidate(
     max_log_pressure_jump: float,
     max_phase_composition_jump: float,
     max_k_value_jump: float,
+    runtime_policy: Optional[ContinuationRuntimePolicy] = None,
+    cancel_check: Optional[Callable[[], None]] = None,
 ) -> ContinuationState:
     """Retry ambiguous seed states with a denser pressure scan."""
     if pressure_seed is None or n_pressure_points >= 220:
@@ -1040,6 +1431,8 @@ def _refine_seed_candidate(
             max_log_pressure_jump=max_log_pressure_jump,
             max_phase_composition_jump=max_phase_composition_jump,
             max_k_value_jump=max_k_value_jump,
+            runtime_policy=runtime_policy,
+            cancel_check=cancel_check,
         )
     except PhaseError:
         return candidate
@@ -1062,6 +1455,9 @@ def _refine_ambiguous_candidate(
     max_log_pressure_jump: float,
     max_phase_composition_jump: float,
     max_k_value_jump: float,
+    pressure_hint: Optional[float] = None,
+    runtime_policy: Optional[ContinuationRuntimePolicy] = None,
+    cancel_check: Optional[Callable[[], None]] = None,
 ) -> ContinuationState:
     """Retry ambiguous steps with a denser pressure scan before accepting them."""
     metrics = _continuation_transition_metrics(previous_state, candidate)
@@ -1076,24 +1472,100 @@ def _refine_ambiguous_candidate(
     if not needs_refinement:
         return candidate
 
-    try:
-        refined = advance_continuation_state(
-            previous_state,
-            temperature=float(temperature),
-            composition=np.asarray(composition, dtype=np.float64),
-            eos=eos,
-            binary_interaction=binary_interaction,
-            n_pressure_points=max(220, int(n_pressure_points) * 2),
-            max_log_pressure_jump=max_log_pressure_jump,
-            max_phase_composition_jump=max_phase_composition_jump,
-            max_k_value_jump=max_k_value_jump,
-        )
-    except PhaseError:
-        return candidate
-
-    if _continuation_score(previous_state, refined) < _continuation_score(previous_state, candidate):
+    refined = _best_refined_candidate(
+        previous_state,
+        temperature=float(temperature),
+        composition=np.asarray(composition, dtype=np.float64),
+        eos=eos,
+        binary_interaction=binary_interaction,
+        n_pressure_points=n_pressure_points,
+        max_log_pressure_jump=max_log_pressure_jump,
+        max_phase_composition_jump=max_phase_composition_jump,
+        max_k_value_jump=max_k_value_jump,
+        pressure_hint=pressure_hint,
+        runtime_policy=runtime_policy,
+        cancel_check=cancel_check,
+    )
+    if refined is not None and _continuation_score(previous_state, refined) < _continuation_score(previous_state, candidate):
         return refined
     return candidate
+
+
+def _refined_pressure_point_options(
+    n_pressure_points: int,
+    *,
+    critical_region: bool,
+    use_pressure_hint: bool,
+) -> tuple[int, ...]:
+    """Return deterministic scan-density refinements for ambiguous local steps."""
+    options: List[int] = []
+    for value in (
+        220,
+        max(220, int(n_pressure_points) * 2),
+        (
+            CRITICAL_REFINEMENT_PRESSURE_POINTS
+            if critical_region and use_pressure_hint
+            else None
+        ),
+    ):
+        if value is None:
+            continue
+        points = int(value)
+        if points <= int(n_pressure_points) or points in options:
+            continue
+        options.append(points)
+    return tuple(options)
+
+
+def _best_refined_candidate(
+    previous_state: ContinuationState,
+    *,
+    temperature: float,
+    composition: NDArray[np.float64],
+    eos: CubicEOS,
+    binary_interaction: Optional[NDArray[np.float64]],
+    n_pressure_points: int,
+    max_log_pressure_jump: float,
+    max_phase_composition_jump: float,
+    max_k_value_jump: float,
+    pressure_hint: Optional[float] = None,
+    runtime_policy: Optional[ContinuationRuntimePolicy] = None,
+    cancel_check: Optional[Callable[[], None]] = None,
+) -> Optional[ContinuationState]:
+    """Return the best refined candidate from a small set of deterministic rescans."""
+    best_candidate: Optional[ContinuationState] = None
+    best_score: Optional[float] = None
+    for refined_points in _refined_pressure_point_options(
+        n_pressure_points,
+        critical_region=_should_use_arclength(previous_state),
+        use_pressure_hint=pressure_hint is not None and np.isfinite(pressure_hint),
+    ):
+        if cancel_check is not None:
+            cancel_check()
+        try:
+            refined = advance_continuation_state(
+                previous_state,
+                temperature=float(temperature),
+                composition=np.asarray(composition, dtype=np.float64),
+                eos=eos,
+                binary_interaction=binary_interaction,
+                n_pressure_points=refined_points,
+                max_log_pressure_jump=max_log_pressure_jump,
+                max_phase_composition_jump=max_phase_composition_jump,
+                max_k_value_jump=max_k_value_jump,
+                pressure_hint=pressure_hint,
+                runtime_policy=runtime_policy,
+                cancel_check=cancel_check,
+            )
+        except PhaseError:
+            continue
+
+        score = _continuation_score(previous_state, refined)
+        if best_score is None or score < best_score:
+            best_candidate = refined
+            best_score = score
+
+    return best_candidate
 
 
 def _retry_failed_candidate_with_refined_scan(
@@ -1107,27 +1579,28 @@ def _retry_failed_candidate_with_refined_scan(
     max_log_pressure_jump: float,
     max_phase_composition_jump: float,
     max_k_value_jump: float,
+    pressure_hint: Optional[float] = None,
+    runtime_policy: Optional[ContinuationRuntimePolicy] = None,
+    cancel_check: Optional[Callable[[], None]] = None,
 ) -> Optional[ContinuationState]:
     """Retry a failed local step with a denser pressure scan before rolling back."""
     if n_pressure_points >= 220:
         return None
 
-    try:
-        candidate = advance_continuation_state(
-            previous_state,
-            temperature=float(temperature),
-            composition=np.asarray(composition, dtype=np.float64),
-            eos=eos,
-            binary_interaction=binary_interaction,
-            n_pressure_points=max(220, int(n_pressure_points) * 2),
-            max_log_pressure_jump=max_log_pressure_jump,
-            max_phase_composition_jump=max_phase_composition_jump,
-            max_k_value_jump=max_k_value_jump,
-        )
-    except PhaseError:
-        return None
-
-    return candidate
+    return _best_refined_candidate(
+        previous_state,
+        temperature=float(temperature),
+        composition=np.asarray(composition, dtype=np.float64),
+        eos=eos,
+        binary_interaction=binary_interaction,
+        n_pressure_points=n_pressure_points,
+        max_log_pressure_jump=max_log_pressure_jump,
+        max_phase_composition_jump=max_phase_composition_jump,
+        max_k_value_jump=max_k_value_jump,
+        pressure_hint=pressure_hint,
+        runtime_policy=runtime_policy,
+        cancel_check=cancel_check,
+    )
 
 
 def _attempt_adaptive_branch_step(
@@ -1144,8 +1617,12 @@ def _attempt_adaptive_branch_step(
     max_k_value_jump: float = DEFAULT_MAX_K_VALUE_JUMP,
     min_temperature_step_k: float = DEFAULT_MIN_TEMPERATURE_STEP_K,
     pressure_hint: Optional[float] = None,
+    prior_state: Optional[ContinuationState] = None,
+    runtime_policy: Optional[ContinuationRuntimePolicy] = None,
+    cancel_check: Optional[Callable[[], None]] = None,
 ) -> tuple[Optional[ContinuationState], float, Optional[str], Optional[float]]:
     """Advance one branch with rollback on ambiguous or failed steps."""
+    policy = _coerce_runtime_policy(runtime_policy)
     direction = 1.0 if float(temperature_end) >= previous_state.temperature else -1.0
     remaining_span = abs(float(temperature_end) - previous_state.temperature)
     attempt_step = float(min(step_k, remaining_span))
@@ -1153,11 +1630,20 @@ def _attempt_adaptive_branch_step(
     last_temperature = previous_state.temperature
 
     while attempt_step >= float(min_temperature_step_k) - 1.0e-12:
+        if cancel_check is not None:
+            cancel_check()
         if direction > 0.0:
             candidate_temperature = min(previous_state.temperature + attempt_step, float(temperature_end))
         else:
             candidate_temperature = max(previous_state.temperature - attempt_step, float(temperature_end))
         last_temperature = float(candidate_temperature)
+        candidate_pressure_hint = pressure_hint
+        if prior_state is not None and policy.use_predictive_pressure_hint:
+            candidate_pressure_hint = _arclength_pressure_hint(
+                previous_state,
+                prior_state,
+                temperature_target=float(candidate_temperature),
+            )
         try:
             candidate = advance_continuation_state(
                 previous_state,
@@ -1169,7 +1655,9 @@ def _attempt_adaptive_branch_step(
                 max_log_pressure_jump=max_log_pressure_jump,
                 max_phase_composition_jump=max_phase_composition_jump,
                 max_k_value_jump=max_k_value_jump,
-                pressure_hint=pressure_hint,
+                pressure_hint=candidate_pressure_hint,
+                runtime_policy=runtime_policy,
+                cancel_check=cancel_check,
             )
             candidate = _refine_ambiguous_candidate(
                 previous_state,
@@ -1182,6 +1670,9 @@ def _attempt_adaptive_branch_step(
                 max_log_pressure_jump=max_log_pressure_jump,
                 max_phase_composition_jump=max_phase_composition_jump,
                 max_k_value_jump=max_k_value_jump,
+                pressure_hint=candidate_pressure_hint,
+                runtime_policy=runtime_policy,
+                cancel_check=cancel_check,
             )
             return candidate, float(attempt_step), None, None
         except PhaseError as exc:
@@ -1198,6 +1689,9 @@ def _attempt_adaptive_branch_step(
                 max_log_pressure_jump=max_log_pressure_jump,
                 max_phase_composition_jump=max_phase_composition_jump,
                 max_k_value_jump=max_k_value_jump,
+                pressure_hint=candidate_pressure_hint,
+                runtime_policy=runtime_policy,
+                cancel_check=cancel_check,
             )
             if refined_candidate is not None:
                 refined_candidate = _refine_ambiguous_candidate(
@@ -1211,6 +1705,9 @@ def _attempt_adaptive_branch_step(
                     max_log_pressure_jump=max_log_pressure_jump,
                     max_phase_composition_jump=max_phase_composition_jump,
                     max_k_value_jump=max_k_value_jump,
+                    pressure_hint=candidate_pressure_hint,
+                    runtime_policy=runtime_policy,
+                    cancel_check=cancel_check,
                 )
                 return refined_candidate, float(attempt_step), None, None
             attempt_step *= 0.5
@@ -1225,20 +1722,23 @@ def _next_adaptive_temperature_step(
     *,
     min_step_k: float,
     max_step_k: float,
+    runtime_policy: Optional[ContinuationRuntimePolicy] = None,
 ) -> float:
     """Grow or hold the next temperature step based on continuity quality."""
+    policy = _coerce_runtime_policy(runtime_policy)
+    medium_growth = 1.0 + 0.5 * (float(policy.step_growth) - 1.0)
     if (
         metrics.log_pressure_jump <= 0.04
         and metrics.phase_component_jump <= 0.03
         and metrics.k_value_jump <= 0.50
     ):
-        factor = DEFAULT_STEP_GROWTH
+        factor = float(policy.step_growth)
     elif (
         metrics.log_pressure_jump <= 0.08
         and metrics.phase_component_jump <= 0.06
         and metrics.k_value_jump <= 1.00
     ):
-        factor = 1.15
+        factor = medium_growth
     else:
         factor = 1.0
     return float(min(float(max_step_k), max(float(min_step_k), previous_step_k * factor)))
@@ -1259,8 +1759,11 @@ def trace_branch_continuation_adaptive(
     max_log_pressure_jump: float = DEFAULT_MAX_LOG_PRESSURE_JUMP,
     max_phase_composition_jump: float = DEFAULT_MAX_PHASE_COMPOSITION_JUMP,
     max_k_value_jump: float = DEFAULT_MAX_K_VALUE_JUMP,
+    runtime_policy: Optional[ContinuationRuntimePolicy] = None,
+    cancel_check: Optional[Callable[[], None]] = None,
 ) -> ContinuationTraceResult:
     """Trace one branch adaptively with rollback and branch-family acceptance gates."""
+    policy = _coerce_runtime_policy(runtime_policy)
     t_start = float(temperature_start)
     t_end = float(temperature_end)
     if not np.isfinite(t_start) or not np.isfinite(t_end) or t_start <= 0.0 or t_end <= 0.0:
@@ -1280,6 +1783,7 @@ def trace_branch_continuation_adaptive(
         temperature_start=t_start,
         temperature_end=t_end,
         target_points=target_points,
+        runtime_policy=policy,
     )
 
     state, termination_reason, termination_temperature = _seed_continuation_state_with_search(
@@ -1296,6 +1800,8 @@ def trace_branch_continuation_adaptive(
         max_log_pressure_jump=max_log_pressure_jump,
         max_phase_composition_jump=max_phase_composition_jump,
         max_k_value_jump=max_k_value_jump,
+        runtime_policy=policy,
+        cancel_check=cancel_check,
     )
     if state is None:
         return ContinuationTraceResult(
@@ -1312,19 +1818,8 @@ def trace_branch_continuation_adaptive(
     direction = 1.0 if t_end >= previous.temperature else -1.0
 
     while direction * (t_end - previous.temperature) > 1.0e-12:
-        use_arclength = prior is not None and _should_use_arclength(previous)
-        pressure_hint = None
-        if use_arclength and prior is not None:
-            pressure_hint = _arclength_pressure_hint(
-                previous,
-                prior,
-                temperature_target=(
-                    previous.temperature + step_k
-                    if direction > 0.0
-                    else previous.temperature - step_k
-                ),
-            )
-
+        if cancel_check is not None:
+            cancel_check()
         candidate, accepted_step_k, failure_reason, failure_temperature = _attempt_adaptive_branch_step(
             previous,
             step_k=step_k,
@@ -1337,7 +1832,9 @@ def trace_branch_continuation_adaptive(
             max_phase_composition_jump=max_phase_composition_jump,
             max_k_value_jump=max_k_value_jump,
             min_temperature_step_k=min_step_k,
-            pressure_hint=pressure_hint,
+            prior_state=prior,
+            runtime_policy=policy,
+            cancel_check=cancel_check,
         )
         if candidate is None:
             termination_reason = failure_reason
@@ -1353,6 +1850,7 @@ def trace_branch_continuation_adaptive(
             metrics,
             min_step_k=min_step_k,
             max_step_k=max_step_k,
+            runtime_policy=policy,
         )
 
     return ContinuationTraceResult(
@@ -1596,6 +2094,7 @@ def detect_continuation_critical_junction(
     dew_trace: ContinuationTraceResult,
     binary_interaction: Optional[NDArray[np.float64]] = None,
     n_pressure_points: int = DEFAULT_CONTINUATION_PRESSURE_POINTS,
+    cancel_check: Optional[Callable[[], None]] = None,
 ) -> Optional[CriticalJunction]:
     """Estimate a critical junction from continuation traces and trivial endpoints."""
     temp_scale = _temperature_scale(temperatures)
@@ -1603,6 +2102,8 @@ def detect_continuation_critical_junction(
     candidates: List[CriticalJunction] = []
 
     for bubble_state in bubble_trace.states:
+        if cancel_check is not None:
+            cancel_check()
         for dew_state in dew_trace.states:
             if abs(bubble_state.temperature - dew_state.temperature) > CRITICAL_PAIR_MAX_TEMP_GAP:
                 continue
@@ -1628,6 +2129,8 @@ def detect_continuation_critical_junction(
     )
     temperatures_with_shared: set[float] = set()
     for temperature in shared_probe_temperatures:
+        if cancel_check is not None:
+            cancel_check()
         shared_pressures = _shared_trivial_endpoint_pressures(
             temperature=float(temperature),
             composition=z,
@@ -1653,6 +2156,8 @@ def detect_continuation_critical_junction(
     for branch in ("bubble", "dew"):
         trivial_entries: List[tuple[float, List[float]]] = []
         for temperature in _critical_probe_temperatures(branch_traces[branch]):
+            if cancel_check is not None:
+                cancel_check()
             if float(temperature) in temperatures_with_shared:
                 continue
             pressures = _trivial_endpoint_pressures(
@@ -1716,6 +2221,12 @@ def _merge_branch_states(*state_groups: Sequence[ContinuationState]) -> tuple[Co
         same_pressure = abs(np.log(previous.pressure / state.pressure)) <= 1.0e-6
         if same_temperature and same_pressure:
             continue
+        if same_temperature and abs(np.log(previous.pressure / state.pressure)) <= SWITCH_MAX_LOG_PRESSURE_GAP:
+            previous_gap = (_state_phase_gap(previous), _state_k_deviation(previous))
+            current_gap = (_state_phase_gap(state), _state_k_deviation(state))
+            if current_gap < previous_gap:
+                unique[-1] = state
+            continue
         unique.append(state)
     return tuple(unique)
 
@@ -1735,6 +2246,8 @@ def _trace_optional_branch_continuation(
     max_log_pressure_jump: float = DEFAULT_MAX_LOG_PRESSURE_JUMP,
     max_phase_composition_jump: float = DEFAULT_MAX_PHASE_COMPOSITION_JUMP,
     max_k_value_jump: float = DEFAULT_MAX_K_VALUE_JUMP,
+    runtime_policy: Optional[ContinuationRuntimePolicy] = None,
+    cancel_check: Optional[Callable[[], None]] = None,
 ) -> ContinuationTraceResult:
     """Trace a branch only when the requested temperature span is non-degenerate."""
     if abs(float(temperature_start) - float(temperature_end)) <= 1.0e-12:
@@ -1754,6 +2267,8 @@ def _trace_optional_branch_continuation(
         max_log_pressure_jump=max_log_pressure_jump,
         max_phase_composition_jump=max_phase_composition_jump,
         max_k_value_jump=max_k_value_jump,
+        runtime_policy=runtime_policy,
+        cancel_check=cancel_check,
     )
 
 
@@ -1766,8 +2281,11 @@ def trace_envelope_continuation(
     binary_interaction: Optional[NDArray[np.float64]] = None,
     n_pressure_points: int = DEFAULT_CONTINUATION_PRESSURE_POINTS,
     max_log_pressure_jump: float = DEFAULT_MAX_LOG_PRESSURE_JUMP,
+    runtime_policy: Optional[ContinuationRuntimePolicy] = None,
+    cancel_check: Optional[Callable[[], None]] = None,
 ) -> EnvelopeContinuationResult:
     """Trace a continuation envelope with adaptive stepping and explicit critical handling."""
+    policy = _coerce_runtime_policy(runtime_policy)
     if len(temperatures) == 0:
         raise ValidationError(
             "temperatures cannot be empty",
@@ -1799,20 +2317,11 @@ def trace_envelope_continuation(
         binary_interaction=binary_interaction,
         n_pressure_points=n_pressure_points,
         max_log_pressure_jump=max_log_pressure_jump,
+        runtime_policy=policy,
+        cancel_check=cancel_check,
     )
 
-    dew_boundary_trace = trace_branch_continuation_adaptive(
-        branch="dew",
-        temperature_start=temperature_min,
-        temperature_end=temperature_max,
-        target_points=target_points,
-        composition=z,
-        components=components,
-        eos=eos,
-        binary_interaction=binary_interaction,
-        n_pressure_points=n_pressure_points,
-        max_log_pressure_jump=max_log_pressure_jump,
-    )
+    dew_boundary_trace = ContinuationTraceResult(branch="dew", states=tuple())
 
     dew_probe_trace = ContinuationTraceResult(branch="dew", states=tuple())
     if bubble_trace.states:
@@ -1828,22 +2337,49 @@ def trace_envelope_continuation(
             pressure_seed=bubble_trace.states[-1].pressure,
             n_pressure_points=n_pressure_points,
             max_log_pressure_jump=max_log_pressure_jump,
+            runtime_policy=policy,
+            cancel_check=cancel_check,
         )
 
-    critical_dew_trace = dew_probe_trace if dew_probe_trace.states else dew_boundary_trace
     critical_state = detect_continuation_critical_junction(
-        temperatures=(
-            [state.temperature for state in bubble_trace.states]
-            + [state.temperature for state in critical_dew_trace.states]
-            + temps
-        ),
+        temperatures=([state.temperature for state in bubble_trace.states] + [state.temperature for state in dew_probe_trace.states] + temps),
         composition=z,
         eos=eos,
         bubble_trace=bubble_trace,
-        dew_trace=critical_dew_trace,
+        dew_trace=dew_probe_trace,
         binary_interaction=binary_interaction,
         n_pressure_points=n_pressure_points,
+        cancel_check=cancel_check,
     )
+    if critical_state is None:
+        dew_boundary_trace = trace_branch_continuation_adaptive(
+            branch="dew",
+            temperature_start=temperature_min,
+            temperature_end=temperature_max,
+            target_points=target_points,
+            composition=z,
+            components=components,
+            eos=eos,
+            binary_interaction=binary_interaction,
+            n_pressure_points=n_pressure_points,
+            max_log_pressure_jump=max_log_pressure_jump,
+            runtime_policy=policy,
+            cancel_check=cancel_check,
+        )
+        critical_state = detect_continuation_critical_junction(
+            temperatures=(
+                [state.temperature for state in bubble_trace.states]
+                + [state.temperature for state in dew_boundary_trace.states]
+                + temps
+            ),
+            composition=z,
+            eos=eos,
+            bubble_trace=bubble_trace,
+            dew_trace=dew_boundary_trace,
+            binary_interaction=binary_interaction,
+            n_pressure_points=n_pressure_points,
+            cancel_check=cancel_check,
+        )
 
     bubble_states = bubble_trace.states
     dew_states = dew_boundary_trace.states
@@ -1852,6 +2388,8 @@ def trace_envelope_continuation(
     switched = critical_state is not None
 
     if critical_state is not None:
+        if cancel_check is not None:
+            cancel_check()
         bubble_states = tuple(
             state
             for state in bubble_trace.states
@@ -1869,23 +2407,31 @@ def trace_envelope_continuation(
             pressure_seed=float(critical_state.pressure),
             n_pressure_points=n_pressure_points,
             max_log_pressure_jump=max_log_pressure_jump,
+            runtime_policy=policy,
+            cancel_check=cancel_check,
         )
-        dew_upper_trace = _trace_optional_branch_continuation(
-            branch="dew",
-            temperature_start=float(critical_state.temperature),
-            temperature_end=temperature_max,
-            target_points=target_points,
-            composition=z,
-            components=components,
-            eos=eos,
-            binary_interaction=binary_interaction,
-            pressure_seed=float(critical_state.pressure),
-            n_pressure_points=n_pressure_points,
-            max_log_pressure_jump=max_log_pressure_jump,
-        )
+        dew_upper_trace = dew_probe_trace
+        if not dew_upper_trace.states:
+            dew_upper_trace = _trace_optional_branch_continuation(
+                branch="dew",
+                temperature_start=float(critical_state.temperature),
+                temperature_end=temperature_max,
+                target_points=target_points,
+                composition=z,
+                components=components,
+                eos=eos,
+                binary_interaction=binary_interaction,
+                pressure_seed=float(critical_state.pressure),
+                n_pressure_points=n_pressure_points,
+                max_log_pressure_jump=max_log_pressure_jump,
+                runtime_policy=policy,
+                cancel_check=cancel_check,
+            )
 
         dew_segments: List[tuple[ContinuationState, ...]] = []
         for trace in (dew_lower_trace, dew_upper_trace):
+            if cancel_check is not None:
+                cancel_check()
             if not trace.states:
                 continue
             nearest = _nearest_state(
@@ -1903,7 +2449,7 @@ def trace_envelope_continuation(
             if dew_upper_trace.states:
                 dew_termination_reason = dew_upper_trace.termination_reason
                 dew_termination_temperature = dew_upper_trace.termination_temperature
-            else:
+            elif dew_lower_trace.states:
                 dew_termination_reason = dew_lower_trace.termination_reason
                 dew_termination_temperature = dew_lower_trace.termination_temperature
         elif dew_probe_trace.states:
@@ -1912,6 +2458,9 @@ def trace_envelope_continuation(
             dew_termination_temperature = dew_probe_trace.termination_temperature
     else:
         switched = False
+
+    if cancel_check is not None:
+        cancel_check()
 
     return EnvelopeContinuationResult(
         bubble_states=tuple(bubble_states),

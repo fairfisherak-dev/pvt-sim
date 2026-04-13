@@ -52,3 +52,12 @@ ehthumbs.db
 
 # Generated validation / assignment outputs
 assignment_run_*.json
+
+# Private course / agent materials
+AGENTS.md
+.agents/
+LECTURE_SLIDES_MERGED.md
+TERM_PROJECT_ASSIGNMENT.md
+*lecture*slides*
+*term*project*assignment*
+*assignment*prompt*

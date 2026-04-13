@@ -117,13 +117,15 @@ fluid preparation.
 | Saturation / flash / phase behavior basics | Present | Wired | Bubble, dew, PT flash, and envelope are real desktop workflows |
 | CCE / DL / CVD / separator | Present | Wired, but partial | Core workflows run; assignment parity is incomplete |
 | Pedersen characterization | Present | Wired | Active plus-fraction runtime path uses Pedersen |
-| Katz characterization | Present | Not wired | Available in `plus_splitting` and `characterization.fluid`, not in the canonical desktop path |
-| Lohrenz characterization | Present | Not wired | Same status as Katz |
+| Katz characterization | Present | Wired | Admitted through the canonical characterization pipeline and runtime contract path |
+| Lohrenz characterization | Present | Wired | Admitted through the canonical characterization pipeline and runtime contract path |
 | Whitson lumping | Present | Not wired | Exists in `characterization.lumping`, but active runtime path still uses `contiguous` |
 | Delumping / composition retrieval | Present | Not wired | Exists in `characterization.delumping` and `SCNLumpingResult`, not preserved through app reporting |
 | Wilson initialization | Present | Wired internally | Used by the kernel as an internal helper, not a user-facing mode |
 | Whitson-Torp K-value workflow | Not found | Not wired | Mentioned in lecture notes but not present as a repo workflow |
 | Predictive `PPR78` BIPs | Present | Not wired | Exists in `characterization.bip` and `eos.ppr78`, not in the desktop runtime |
+| `SRK` EOS | Present | Wired | Admitted through the canonical runtime EOS factory and contract tests |
+| `PR78` EOS | Present | Wired | Separate runtime EOS class; distinct from predictive `PPR78` BIP handling |
 | Viscosity (`LBC`) | Present | Not wired | Present in `pvtcore.properties` only |
 | IFT (`parachor`) | Present | Not wired | Present in `pvtcore.properties` only |
 | Confinement | Present | Not wired | Present in `pvtcore.confinement` only |

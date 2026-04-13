@@ -154,9 +154,9 @@ class CubicEOS(ABC):
 
         # Solve cubic equation
         if phase == 'auto':
-            return solve_cubic_eos(A, B, root_type='all')
+            return solve_cubic_eos(A, B, root_type='all', u=self.u, w=self.w)
         else:
-            return solve_cubic_eos(A, B, root_type=phase)
+            return solve_cubic_eos(A, B, root_type=phase, u=self.u, w=self.w)
 
     @abstractmethod
     def fugacity_coefficient(
@@ -251,7 +251,7 @@ class CubicEOS(ABC):
         B = b_mix * pressure / (R.Pa_m3_per_mol_K * temperature)
 
         # Get all roots for diagnostics
-        all_roots = solve_cubic_eos(A, B, root_type='all')
+        all_roots = solve_cubic_eos(A, B, root_type='all', u=self.u, w=self.w)
 
         # Determine phase
         if phase == 'auto':
@@ -265,7 +265,7 @@ class CubicEOS(ABC):
                 Z = all_roots[0]
         else:
             phase_result = phase
-            Z = solve_cubic_eos(A, B, root_type=phase)
+            Z = solve_cubic_eos(A, B, root_type=phase, u=self.u, w=self.w)
 
         # Calculate fugacity coefficients
         if isinstance(Z, (list, np.ndarray)) and len(Z) > 1:

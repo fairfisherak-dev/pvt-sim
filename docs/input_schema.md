@@ -62,7 +62,7 @@ fluid:
           mw: 110.0
           sg: 0.74
     splitting:                        # controls how C7+ is expanded
-      method: "pedersen"              # pedersen | katz | lohrens | whitson_gamma (future)
+      method: "pedersen"              # pedersen | katz | lohrenz
       target_end: "C20+"              # e.g., "C20+", "C30+", "C45+"
       max_carbon_number: 45           # only used for methods that need explicit N
       pedersen:
@@ -71,12 +71,12 @@ fluid:
         solve_AB_from: "balances"     # balances | fit_to_tbp
       katz:
         zn_formula: "zn = 1.38205*z7plus*exp(-0.25903*n)"
-      lohrens:
+      lohrenz:
         requires_partial_molar_fit: true
     lumping:
       enabled: false
       n_groups: 8
-      method: "whitson"
+      method: "contiguous"
       mixing: "lee"                   # how Tc/Pc/omega mix for lumps
 
   eos:
@@ -110,4 +110,3 @@ confinement:                          # OPTIONAL: only for nano-confined runs
     max_iters: 50
     tol_pc_pa: 1.0
     ift_method: "parachor"            # depends on densities + compositions
-

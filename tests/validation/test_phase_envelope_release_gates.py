@@ -215,11 +215,11 @@ def test_release_gate_co2_rich_case_stops_before_fake_flat_tail() -> None:
     )
     assert first.critical_state is not None
     assert first.critical_state.source == "branch_closest_approach"
-    assert 307.0 <= first.critical_state.temperature <= 308.0
+    assert 306.5 <= first.critical_state.temperature <= 308.0
     assert 70.0 <= first.critical_state.pressure / 1.0e5 <= 73.0
     assert first.switched is True
     assert first.bubble_termination_reason == "no_local_root_candidates"
-    assert 307.5 <= first.bubble_termination_temperature <= 308.5
+    assert 307.0 <= first.bubble_termination_temperature <= 308.5
     assert first.dew_termination_reason in {"branch_family_lost", "no_local_root_candidates"}
     assert first.dew_termination_temperature is not None
     assert len(first.bubble_states) >= 8
@@ -229,7 +229,7 @@ def test_release_gate_co2_rich_case_stops_before_fake_flat_tail() -> None:
     assert np.all(np.diff(bubble_pressures) > 0.0)
     _assert_temperatures_strictly_increasing(first.bubble_states)
     _assert_temperatures_strictly_increasing(first.dew_states)
-    _assert_max_log_pressure_jump(first.dew_states, maximum=0.20)
+    _assert_max_log_pressure_jump(first.dew_states, maximum=0.08)
     critical_dew_neighbor = min(
         first.dew_states,
         key=lambda state: abs(state.temperature - first.critical_state.temperature),

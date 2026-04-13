@@ -191,11 +191,12 @@ For each active slice, include:
   - 2026-04-12
 
 - directive / task name: runtime surface consolidation + assignment validation expansion
-  owner / lane: Ole + Codex on `codex/handoff-external-validation`
+  owner / lane: Ole + Codex on `codex/validate-composition-across-modules`
   touched repo surfaces:
   - `AGENTS.md`
   - `README.md`
   - `docs/development.md`
+  - `docs/input_schema.md`
   - `docs/runtime_surface_standard.md`
   - `docs/runtime_surface_consolidation_blueprint.md`
   - `docs/validation/`
@@ -211,14 +212,17 @@ For each active slice, include:
   - `src/pvtapp/plus_fraction_policy.py`
   - `src/pvtapp/schemas.py`
   - `src/pvtapp/widgets/`
+  - `src/pvtcore/characterization/pipeline.py`
   - `src/pvtcore/envelope/`
   - `src/pvtcore/experiments/cce.py`
   - `src/pvtcore/flash/bubble_point.py`
   - `src/pvtcore/flash/dew_point.py`
   - `src/pvtcore/io/data_io.py`
+  - `src/pvtcore/io/fluid_definition.py`
   - `src/pvtcore/models/component.py`
   - `src/pvtcore/validation/`
   - `tests/unit/test_envelope_*`
+  - `tests/unit/test_fluid_definition_parser.py`
   - `tests/unit/test_pete665_assignment.py`
   - `tests/unit/test_pvtapp_*`
   - `tests/unit/test_saturation.py`
@@ -242,9 +246,10 @@ For each active slice, include:
   - a fresh targeted verification pass is still required before declaring the branch clean
   - full-suite status remains intentionally unknown unless explicitly requested
   status:
-  - dirty-worktree cleanup in progress; preparing one coherent checkpoint commit
+  - dirty-worktree cleanup in progress on the reconciled validation-across-modules lane
   coordination rule:
   - do not run overlapping edits across `src/pvtapp/`, `src/pvtcore/flash/`, `src/pvtcore/envelope/`, `src/pvtcore/validation/`, and validation docs until this cleanup checkpoint lands
+  - treat fresh `phase-envelope` and `gui` work as follow-on lanes branched from updated `main`, not from this mixed validation lane
   last structural update:
   - 2026-04-12
 
@@ -284,3 +289,4 @@ Do not run concurrent delegated work against the same repo surface unless the co
 - 2026-04-11: Promoted the validated desktop-contract slice to the canonical baseline on `main`.
 - 2026-04-12: Added the unified saturation-validation lane so bubble-point and dew-point authority, robustness, and GUI honesty stay in one controlled surface.
 - 2026-04-12: Added the runtime-surface consolidation + assignment validation expansion slice to capture the current branch scope while the dirty worktree is being cleaned for commit.
+- 2026-04-12: Reconciled the active mixed local lane onto `codex/validate-composition-across-modules` so fresh `phase-envelope` and `gui` follow-on branches can split cleanly from updated `main`.

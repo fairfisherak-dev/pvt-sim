@@ -316,11 +316,15 @@ def test_conditions_widget_returns_enum_members_from_combo_data(app: QApplicatio
     assert widget.get_eos_type() is EOSType.PENG_ROBINSON
 
 
-def test_conditions_widget_rejects_unsupported_gui_eos_type(app: QApplication) -> None:
+@pytest.mark.parametrize("eos_type", GUI_SUPPORTED_EOS_TYPES)
+def test_conditions_widget_accepts_supported_gui_eos_type(
+    app: QApplication,
+    eos_type: EOSType,
+) -> None:
     widget = ConditionsInputWidget()
+    widget.set_eos_type(eos_type)
 
-    with pytest.raises(ValueError, match="not currently exposed in the desktop GUI"):
-        widget.set_eos_type(EOSType.SRK)
+    assert widget.get_eos_type() is eos_type
 
 
 def test_conditions_widget_loads_cvd_run_config(app: QApplication) -> None:
@@ -549,13 +553,17 @@ def test_conditions_widget_loads_separator_run_config(app: QApplication) -> None
     assert float(widget.separator_stage_table.item(1, 1).text()) == pytest.approx(5.0)
 
 
-def test_conditions_widget_rejects_loading_unsupported_gui_eos_run_config(app: QApplication) -> None:
+@pytest.mark.parametrize("eos_type", (EOSType.SRK, EOSType.PR78))
+def test_conditions_widget_loads_supported_gui_eos_run_config(
+    app: QApplication,
+    eos_type: EOSType,
+) -> None:
     widget = ConditionsInputWidget()
     config = RunConfig.model_validate(
         {
             "composition": {"components": [{"component_id": "C1", "mole_fraction": 1.0}]},
             "calculation_type": "pt_flash",
-            "eos_type": "srk",
+            "eos_type": eos_type.value,
             "pt_flash_config": {
                 "pressure_pa": 5.0e6,
                 "temperature_k": 350.0,
@@ -563,8 +571,9 @@ def test_conditions_widget_rejects_loading_unsupported_gui_eos_run_config(app: Q
         }
     )
 
-    with pytest.raises(ValueError, match="not currently exposed in the desktop GUI"):
-        widget.load_from_run_config(config)
+    widget.load_from_run_config(config)
+
+    assert widget.get_eos_type() is eos_type
 
 
 def test_conditions_widget_loads_pt_flash_run_config_with_nondefault_units(app: QApplication) -> None:
