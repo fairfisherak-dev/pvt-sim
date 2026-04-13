@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 
 from pvtapp import __version__, __app_name__
 from pvtapp.plus_fraction_policy import resolve_plus_fraction_entry
+from pvtapp.recommendation_policy import format_run_recommendation, recommend_run_setup
 from pvtapp.schemas import (
     COMPOSITION_SUM_TOLERANCE,
     RunConfig,
@@ -174,6 +175,11 @@ class PVTSimulatorWindow(QMainWindow):
 
         run_menu.addSeparator()
 
+        self.recommend_action = QAction("&Recommend Setup", self)
+        self.recommend_action.setShortcut(QKeySequence("Ctrl+Shift+R"))
+        self.recommend_action.triggered.connect(self._recommend_setup)
+        run_menu.addAction(self.recommend_action)
+
         validate_action = QAction("&Validate Input", self)
         validate_action.setShortcut(QKeySequence("Ctrl+Shift+V"))
         validate_action.triggered.connect(self._validate_input)
@@ -225,6 +231,10 @@ class PVTSimulatorWindow(QMainWindow):
         toolbar.addWidget(self.cancel_btn)
 
         toolbar.addSeparator()
+
+        self.recommend_btn = QPushButton("Recommend")
+        self.recommend_btn.clicked.connect(self._recommend_setup)
+        toolbar.addWidget(self.recommend_btn)
 
         # Validate button
         validate_btn = QPushButton("Validate")
@@ -446,7 +456,7 @@ class PVTSimulatorWindow(QMainWindow):
     def _update_component_dependent_views(self) -> None:
         """Update component-dependent panels (critical props / BIPs)."""
         try:
-            component_ids = [cid for cid, _frac in self.composition_widget.get_components() if cid]
+            component_ids = [cid for cid, _frac in self.composition_widget._get_runtime_components() if cid]
         except Exception:
             component_ids = []
 
@@ -650,6 +660,7 @@ class PVTSimulatorWindow(QMainWindow):
             if hasattr(self.composition_widget, "composition_edited"):
                 self.composition_widget.composition_edited.emit()
             self.results_sidebar.clear()
+            self.results_table.clear(clear_captured=True)
             self.results_plot.clear()
             self.diagnostics_widget.clear()
             self.text_output_widget.clear()
@@ -902,6 +913,44 @@ class PVTSimulatorWindow(QMainWindow):
         )
 
     @Slot()
+    def _recommend_setup(self) -> None:
+        """Analyze the current feed and surface advisory workflow/EOS guidance."""
+        if not self._offer_feed_normalization_if_needed():
+            return
+
+        comp_valid, comp_error = self.composition_widget.validate()
+        if not comp_valid:
+            QMessageBox.warning(
+                self,
+                "Recommendation Unavailable",
+                f"Composition error: {comp_error}",
+            )
+            return
+
+        composition = self.composition_widget.get_composition()
+        if composition is None:
+            QMessageBox.warning(
+                self,
+                "Recommendation Unavailable",
+                "Finish entering the fluid composition before requesting a recommendation.",
+            )
+            return
+
+        calculation_type = self.conditions_widget.get_calculation_type()
+        current_eos = self.conditions_widget.get_eos_type()
+        recommendation = recommend_run_setup(
+            composition,
+            calculation_type,
+            current_eos=current_eos,
+        )
+        QMessageBox.information(
+            self,
+            "Setup Recommendation",
+            format_run_recommendation(recommendation),
+        )
+        self.status_label.setText("Recommendation ready")
+
+    @Slot()
     def _run_calculation(self) -> None:
         """Start calculation in background thread."""
         # Build and validate config
@@ -1004,6 +1053,8 @@ class PVTSimulatorWindow(QMainWindow):
         self.run_action.setEnabled(not running)
         self.cancel_btn.setEnabled(running)
         self.cancel_action.setEnabled(running)
+        self.recommend_btn.setEnabled(not running)
+        self.recommend_action.setEnabled(not running)
         self.run_log_widget.set_replay_actions_enabled(not running)
 
     @Slot(str)

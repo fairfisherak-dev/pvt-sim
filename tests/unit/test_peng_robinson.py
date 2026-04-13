@@ -77,19 +77,13 @@ class TestPureComponentParameters:
         assert n2_eos.kappa[0] == pytest.approx(kappa_expected, rel=1e-10)
 
     def test_kappa_calculation_high_omega(self, components):
-        """Test kappa calculation for heavy component with ω > 0.49."""
-        # Use n-decane with high acentric factor
-        decane_eos = PengRobinsonEOS([components['C10']])
-        omega = components['C10'].omega  # 0.4884
+        """PR76 keeps the classic correlation even for heavy components."""
+        pr76_eos = PengRobinsonEOS([components['C12']])
+        omega = components['C12'].omega
+        assert omega > 0.49
 
-        if omega > 0.49:
-            # Extended correlation
-            kappa_expected = (
-                0.379642 + 1.48503 * omega
-                - 0.164423 * omega ** 2
-                + 0.016666 * omega ** 3
-            )
-            assert decane_eos.kappa[0] == pytest.approx(kappa_expected, rel=1e-10)
+        kappa_expected = 0.37464 + 1.54226 * omega - 0.26992 * omega ** 2
+        assert pr76_eos.kappa[0] == pytest.approx(kappa_expected, rel=1e-10)
 
     def test_alpha_at_critical_temperature(self, methane_eos, components):
         """Test that alpha = 1 at critical temperature."""

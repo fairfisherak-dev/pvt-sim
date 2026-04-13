@@ -404,27 +404,44 @@ def _find_saturation_pressure(
     from ..flash.bubble_point import calculate_bubble_point
     from ..flash.dew_point import calculate_dew_point
 
-    # Try bubble point first
+    candidates: list[tuple[float, str]] = []
+
     try:
         result = calculate_bubble_point(
             temperature, composition, components, eos,
             binary_interaction=binary_interaction,
         )
-        if P_low < result.pressure < P_high:
-            return result.pressure, 'bubble'
+        candidates.append((float(result.pressure), 'bubble'))
     except (ConvergenceError, PhaseError):
         pass
 
-    # Try dew point
     try:
         result = calculate_dew_point(
             temperature, composition, components, eos,
             binary_interaction=binary_interaction,
         )
-        if P_low < result.pressure < P_high:
-            return result.pressure, 'dew'
+        candidates.append((float(result.pressure), 'dew'))
     except (ConvergenceError, PhaseError):
         pass
+
+    if candidates:
+        in_schedule = [
+            (pressure, sat_type)
+            for pressure, sat_type in candidates
+            if P_low < pressure < P_high
+        ]
+        if in_schedule:
+            candidates = in_schedule
+
+        if len(candidates) == 1:
+            return candidates[0]
+
+        avg_MW = sum(composition[i] * comp.MW for i, comp in enumerate(components))
+        preferred_type = 'bubble' if avg_MW > 50 else 'dew'
+        for pressure, sat_type in candidates:
+            if sat_type == preferred_type:
+                return pressure, sat_type
+        return candidates[0]
 
     # Fallback: estimate from flash behavior
     P_mid = (P_high + P_low) / 2
@@ -442,7 +459,6 @@ def _find_saturation_pressure(
             break
         P_mid = (P_high + P_low) / 2
 
-    # Determine type based on composition heaviness
     avg_MW = sum(composition[i] * comp.MW for i, comp in enumerate(components))
     sat_type = 'bubble' if avg_MW > 50 else 'dew'
 

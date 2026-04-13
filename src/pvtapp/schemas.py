@@ -282,6 +282,10 @@ class PlusFractionEntry(BaseModel):
         le=200,
         description="Maximum SCN carbon number to include when splitting the plus fraction",
     )
+    split_method: Literal["pedersen", "katz", "lohrenz"] = Field(
+        default="pedersen",
+        description="Canonical plus-fraction splitting method",
+    )
     split_mw_model: Literal["paraffin", "table"] = Field(
         default="paraffin",
         description="Pedersen SCN molecular-weight model",

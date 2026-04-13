@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from pvtcore.characterization import KatzSplitResult, LohrenzSplitResult
 from pvtcore.core.errors import ConfigurationError, ValidationError
 from pvtcore.io import characterize_from_schema, load_fluid_definition
 
@@ -124,6 +125,28 @@ def test_schema_rejects_unsupported_lumping_method() -> None:
     doc["fluid"]["plus_fraction"]["lumping"]["method"] = "whitson"
     with pytest.raises(ConfigurationError):
         characterize_from_schema(doc)
+
+
+@pytest.mark.parametrize(
+    ("split_method", "expected_result_type"),
+    [
+        ("katz", KatzSplitResult),
+        ("lohrenz", LohrenzSplitResult),
+        ("lohrens", LohrenzSplitResult),
+    ],
+)
+def test_schema_accepts_supported_plus_fraction_split_methods(
+    split_method: str,
+    expected_result_type: type,
+) -> None:
+    doc = _example_doc()
+    doc["fluid"]["plus_fraction"]["splitting"]["method"] = split_method
+
+    res = characterize_from_schema(doc)
+
+    assert res.plus_fraction is not None
+    assert np.isclose(float(res.composition.sum()), 1.0)
+    assert isinstance(res.split_result, expected_result_type)
 
 
 def test_schema_rejects_unsupported_correlation() -> None:

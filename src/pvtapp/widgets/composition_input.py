@@ -375,6 +375,9 @@ class CompositionInputWidget(QWidget):
         self.plus_end_spin = NoWheelSpinBox()
         self.plus_end_spin.setRange(1, 200)
         self.plus_end_spin.setValue(45)
+        self.plus_split_method = NoWheelComboBox()
+        self.plus_split_method.addItems(["pedersen", "katz", "lohrenz"])
+        self.plus_split_method.setCurrentText("pedersen")
         self.plus_split_mw_model = NoWheelComboBox()
         self.plus_split_mw_model.addItems(["paraffin", "table"])
         self.plus_split_mw_model.setCurrentText("paraffin")
@@ -388,6 +391,7 @@ class CompositionInputWidget(QWidget):
         plus_form.addRow("Characterization", self.plus_characterization_preset)
         plus_form.addRow("Resolved", self.plus_characterization_summary)
         plus_form.addRow("Split To", self.plus_end_spin)
+        plus_form.addRow("Split Method", self.plus_split_method)
         plus_form.addRow("Split MW Model", self.plus_split_mw_model)
         plus_form.addRow("Lumping", self.plus_lumping_enabled)
         plus_form.addRow("Lumping Groups", self.plus_lumping_groups_spin)
@@ -781,16 +785,19 @@ class CompositionInputWidget(QWidget):
 
     def _set_plus_controls_from_resolved_entry(self, plus_fraction: PlusFractionEntry) -> None:
         self.plus_end_spin.blockSignals(True)
+        self.plus_split_method.blockSignals(True)
         self.plus_split_mw_model.blockSignals(True)
         self.plus_lumping_enabled.blockSignals(True)
         self.plus_lumping_groups_spin.blockSignals(True)
         try:
             self.plus_end_spin.setValue(plus_fraction.max_carbon_number)
+            self.plus_split_method.setCurrentText(plus_fraction.split_method)
             self.plus_split_mw_model.setCurrentText(plus_fraction.split_mw_model)
             self.plus_lumping_enabled.setChecked(plus_fraction.lumping_enabled)
             self.plus_lumping_groups_spin.setValue(plus_fraction.lumping_n_groups)
         finally:
             self.plus_end_spin.blockSignals(False)
+            self.plus_split_method.blockSignals(False)
             self.plus_split_mw_model.blockSignals(False)
             self.plus_lumping_enabled.blockSignals(False)
             self.plus_lumping_groups_spin.blockSignals(False)
@@ -808,7 +815,8 @@ class CompositionInputWidget(QWidget):
                 return None, "Manual: edit split/lumping settings directly."
             settings = PLUS_FRACTION_PRESET_SETTINGS[preset]
             return None, (
-                f"{PLUS_FRACTION_PRESET_LABELS[preset]}; split MW model {settings.split_mw_model}, "
+                f"{PLUS_FRACTION_PRESET_LABELS[preset]}; split method {settings.split_method}, "
+                f"split MW model {settings.split_mw_model}, "
                 f"split to C{settings.max_carbon_number}, "
                 f"lumping {'on' if settings.lumping_enabled else 'off'}"
                 + (f" ({settings.lumping_n_groups} groups)" if settings.lumping_enabled else "")
@@ -829,6 +837,7 @@ class CompositionInputWidget(QWidget):
         if self._get_heavy_mode() != HEAVY_MODE_PLUS:
             self.plus_characterization_summary.setText("Not active")
             self.plus_end_spin.setEnabled(False)
+            self.plus_split_method.setEnabled(False)
             self.plus_split_mw_model.setEnabled(False)
             self.plus_lumping_enabled.setEnabled(False)
             self.plus_lumping_groups_spin.setEnabled(False)
@@ -844,21 +853,25 @@ class CompositionInputWidget(QWidget):
         elif not manual and preset in PLUS_FRACTION_PRESET_SETTINGS:
             settings = PLUS_FRACTION_PRESET_SETTINGS[preset]
             self.plus_end_spin.blockSignals(True)
+            self.plus_split_method.blockSignals(True)
             self.plus_split_mw_model.blockSignals(True)
             self.plus_lumping_enabled.blockSignals(True)
             self.plus_lumping_groups_spin.blockSignals(True)
             try:
                 self.plus_end_spin.setValue(settings.max_carbon_number)
+                self.plus_split_method.setCurrentText(settings.split_method)
                 self.plus_split_mw_model.setCurrentText(settings.split_mw_model)
                 self.plus_lumping_enabled.setChecked(settings.lumping_enabled)
                 self.plus_lumping_groups_spin.setValue(settings.lumping_n_groups)
             finally:
                 self.plus_end_spin.blockSignals(False)
+                self.plus_split_method.blockSignals(False)
                 self.plus_split_mw_model.blockSignals(False)
                 self.plus_lumping_enabled.blockSignals(False)
                 self.plus_lumping_groups_spin.blockSignals(False)
 
         self.plus_end_spin.setEnabled(manual)
+        self.plus_split_method.setEnabled(manual)
         self.plus_split_mw_model.setEnabled(manual)
         self.plus_lumping_enabled.setEnabled(manual)
         self._sync_plus_lumping_state()
@@ -930,6 +943,7 @@ class CompositionInputWidget(QWidget):
         for combo in [self.inline_tc_unit, self.inline_pc_unit]:
             combo.currentTextChanged.connect(self._on_cell_changed)
         self.plus_characterization_preset.currentIndexChanged.connect(self._on_cell_changed)
+        self.plus_split_method.currentTextChanged.connect(self._on_cell_changed)
         self.plus_split_mw_model.currentTextChanged.connect(self._on_cell_changed)
         self.plus_lumping_enabled.toggled.connect(self._sync_plus_lumping_state)
         self.plus_lumping_enabled.toggled.connect(self._on_cell_changed)
@@ -1034,6 +1048,7 @@ class CompositionInputWidget(QWidget):
         self.plus_sg_edit.clear()
         self.plus_characterization_preset.setCurrentIndex(0)
         self.plus_end_spin.setValue(45)
+        self.plus_split_method.setCurrentText("pedersen")
         self.plus_split_mw_model.setCurrentText("paraffin")
         self.plus_lumping_enabled.setChecked(False)
         self.plus_lumping_groups_spin.setValue(8)
@@ -1110,6 +1125,7 @@ class CompositionInputWidget(QWidget):
                 sg_plus_60f=sg_plus,
                 characterization_preset=self._current_plus_characterization_preset(),
                 max_carbon_number=self.plus_end_spin.value(),
+                split_method=self.plus_split_method.currentText(),
                 split_mw_model=self.plus_split_mw_model.currentText(),
                 lumping_enabled=self.plus_lumping_enabled.isChecked(),
                 lumping_n_groups=self.plus_lumping_groups_spin.value(),
@@ -1668,6 +1684,7 @@ class CompositionInputWidget(QWidget):
             if preset_index >= 0:
                 self.plus_characterization_preset.setCurrentIndex(preset_index)
             self.plus_end_spin.setValue(composition.plus_fraction.max_carbon_number)
+            self.plus_split_method.setCurrentText(composition.plus_fraction.split_method)
             self.plus_split_mw_model.setCurrentText(composition.plus_fraction.split_mw_model)
             self.plus_lumping_enabled.setChecked(composition.plus_fraction.lumping_enabled)
             self.plus_lumping_groups_spin.setValue(composition.plus_fraction.lumping_n_groups)

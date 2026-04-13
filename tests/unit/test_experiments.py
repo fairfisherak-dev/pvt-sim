@@ -28,6 +28,14 @@ from pvtcore.eos.peng_robinson import PengRobinsonEOS
 from pvtcore.core.constants import R
 from pvtcore.core.errors import ValidationError
 from pvtcore.experiments.cvd import _cvd_step
+from pvtcore.flash import calculate_bubble_point
+from pvtcore.validation.pete665_assignment import (
+    build_assignment_fluid,
+    fahrenheit_to_kelvin,
+    load_assignment_case,
+    psia_to_pa,
+    resolve_assignment_temperature_f,
+)
 
 
 @pytest.fixture
@@ -188,6 +196,47 @@ class TestCCE:
 
         with pytest.raises(ValidationError):
             simulate_cce(z, 300.0, methane_propane, methane_propane_eos, -10e6, 1e6)
+
+    def test_cce_uses_true_saturation_when_schedule_stays_above_bubble_point(self):
+        """CCE should retain the physical bubble point even if the test schedule stays above it."""
+        case = load_assignment_case()
+        temperature_f, _ = resolve_assignment_temperature_f(case, initials="TANS")
+        temperature_k = fahrenheit_to_kelvin(temperature_f)
+
+        _component_ids, components, composition = build_assignment_fluid(case)
+        eos = PengRobinsonEOS(components)
+        binary_interaction = np.zeros((len(components), len(components)), dtype=float)
+        bubble_result = calculate_bubble_point(
+            temperature_k,
+            composition,
+            components,
+            eos,
+            binary_interaction=binary_interaction,
+        )
+        pressure_steps = np.asarray(
+            [psia_to_pa(value) for value in case.cce_pressures_psia],
+            dtype=np.float64,
+        )
+
+        assert float(bubble_result.pressure) < float(pressure_steps[-1])
+
+        result = simulate_cce(
+            composition,
+            temperature_k,
+            components,
+            eos,
+            float(pressure_steps[0]),
+            float(pressure_steps[-1]),
+            n_steps=len(pressure_steps),
+            pressure_steps=pressure_steps,
+            binary_interaction=binary_interaction,
+        )
+
+        assert result.saturation_type == "bubble"
+        assert result.saturation_pressure == pytest.approx(
+            float(bubble_result.pressure),
+            abs=250.0,
+        )
 
 
 # =============================================================================

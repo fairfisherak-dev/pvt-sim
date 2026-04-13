@@ -53,10 +53,11 @@ ehthumbs.db
 # Generated validation / assignment outputs
 assignment_run_*.json
 
-# UAF related docs
+# Private course / agent materials
+AGENTS.md
+.agents/
 LECTURE_SLIDES_MERGED.md
 TERM_PROJECT_ASSIGNMENT.md
-
-# AI tooling
-AGENTS.md
-.agents/*
+*lecture*slides*
+*term*project*assignment*
+*assignment*prompt*

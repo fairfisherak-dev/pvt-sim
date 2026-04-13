@@ -4,7 +4,12 @@ This module provides implementations of cubic equations of state for phase behav
 
 ## Overview
 
-The EOS module implements the **Peng-Robinson (1976)** equation of state with full support for:
+The EOS module currently implements these cubic EOS variants:
+- **Peng-Robinson (1976)** via `PengRobinsonEOS`
+- **Peng-Robinson (1978)** via `PR78EOS`
+- **Soave-Redlich-Kwong** via `SRKEOS`
+
+All three support:
 - Pure component calculations
 - Multi-component mixtures with van der Waals mixing rules
 - Binary interaction parameters
@@ -13,7 +18,7 @@ The EOS module implements the **Peng-Robinson (1976)** equation of state with fu
 - Density and molar volume calculations
 - Departure functions (enthalpy, entropy, Gibbs energy)
 
-## Peng-Robinson Equation of State
+## Peng-Robinson Equation of State Family
 
 ### Formulation
 
@@ -42,12 +47,15 @@ b = 0.07780 RTc/Pc      # Covolume parameter
 
 **Temperature Dependence:**
 ```python
-κ = 0.37464 + 1.54226ω - 0.26992ω²  # for ω ≤ 0.49
-κ = 0.379642 + 1.48503ω - 0.164423ω² + 0.016666ω³  # for ω > 0.49
+κ_76 = 0.37464 + 1.54226ω - 0.26992ω²
+κ_78 = 0.379642 + 1.48503ω - 0.164423ω² + 0.016666ω³
 
 α(T) = [1 + κ(1 - √(T/Tc))]²
 a(T) = a_c × α(T)
 ```
+
+`PengRobinsonEOS` uses the classic 1976 kappa correlation. `PR78EOS` uses the
+1978 GPA-program heavy-end extension as a separate runtime EOS class.
 
 **Mixing Rules (van der Waals one-fluid):**
 ```python
@@ -178,6 +186,13 @@ print(f"G departure: {departure['gibbs_departure']:.2f} J/mol")
 **Constructor:**
 ```python
 PengRobinsonEOS(components: List[Component])
+```
+
+### PR78EOS Class
+
+**Constructor:**
+```python
+PR78EOS(components: List[Component])
 ```
 
 **Key Methods:**

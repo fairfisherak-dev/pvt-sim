@@ -93,6 +93,39 @@ def solve_cubic(c2: float, c1: float, c0: float, tol: float = 1e-10) -> List[flo
     return roots
 
 
+def eos_cubic_coefficients(
+    A: float,
+    B: float,
+    *,
+    u: float = 2.0,
+    w: float = -1.0,
+) -> Tuple[float, float, float]:
+    """Return cubic EOS coefficients for the generalized u-w form.
+
+    The generalized cubic EOS is:
+        P = RT/(V-b) - a(T)/(V² + ubV + wb²)
+
+    which maps to the compressibility-factor cubic:
+        Z³ + c₂Z² + c₁Z + c₀ = 0
+
+    Parameters
+    ----------
+    A, B : float
+        Dimensionless EOS parameters.
+    u, w : float
+        EOS-shape parameters. Defaults correspond to Peng-Robinson.
+
+    Returns
+    -------
+    tuple[float, float, float]
+        Coefficients ``(c2, c1, c0)`` for ``Z³ + c₂Z² + c₁Z + c₀ = 0``.
+    """
+    c2 = -(1.0 + B - u * B)
+    c1 = A - u * B - (u - w) * B ** 2
+    c0 = -(A * B + w * B ** 2 + w * B ** 3)
+    return c2, c1, c0
+
+
 def _solve_three_real_roots(p: float, q: float, shift: float) -> List[float]:
     """Solve depressed cubic with three real roots using trigonometric solution.
 
@@ -210,7 +243,10 @@ def select_root(
 def solve_cubic_eos(
     A: float,
     B: float,
-    root_type: Literal["liquid", "vapor", "all"] = "vapor"
+    root_type: Literal["liquid", "vapor", "all"] = "vapor",
+    *,
+    u: float = 2.0,
+    w: float = -1.0,
 ) -> float | List[float]:
     """Solve cubic EOS equation for compressibility factor Z.
 
@@ -223,20 +259,19 @@ def solve_cubic_eos(
         A: Dimensionless attraction parameter (aP/R²T²)
         B: Dimensionless repulsion parameter (bP/RT)
         root_type: Type of root to select
+        u: EOS-shape parameter for the generalized cubic form
+        w: EOS-shape parameter for the generalized cubic form
 
     Returns:
         Selected compressibility factor(s)
 
     Note:
-        For Peng-Robinson EOS:
+        For Peng-Robinson EOS (the default):
         c₂ = -(1 - B)
         c₁ = A - 2B - 3B²
         c₀ = -(AB - B² - B³)
     """
-    # Peng-Robinson EOS coefficients
-    c2 = -(1.0 - B)
-    c1 = A - 2.0 * B - 3.0 * B ** 2
-    c0 = -(A * B - B ** 2 - B ** 3)
+    c2, c1, c0 = eos_cubic_coefficients(A, B, u=u, w=w)
 
     roots = solve_cubic(c2, c1, c0)
     return select_root(roots, root_type, min_value=B)  # Z must be > B for physical meaning
