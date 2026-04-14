@@ -70,6 +70,19 @@ This repo uses a controller-and-worker model.
 - No feature implementation occurs in the integration root.
 - All accepted progress flows through `main`.
 
+### Codex desktop branch rule
+
+When operating in the Codex desktop app, default to one normal branch in the
+current checkout.
+
+- Do not create extra Git worktrees or occupy multiple lane branches from this
+  repo unless the user explicitly asks for concurrent isolated work and accepts
+  that plain branch switching in the current checkout will stop working while
+  those worktrees exist.
+- If the user wants one continuous implementation stream that spans thermo,
+  runtime-surface, and GUI exposure work, keep that work on one branch instead
+  of splitting it across lane worktrees.
+
 ### Integration-root rule
 
 All branch-state operations involving `main` must be rooted through the

@@ -135,83 +135,11 @@ For each active slice, include:
 - last structural update
 
 ### Current active slices
-- directive / task name: gui general UI fixes
-  owner / lane: Ole + Codex on active `gui` lane
-  branch:
-  - planned `codex/gui`
-  worktree:
-  - pending dedicated `gui` worker bootstrap from current `main`
-  touched repo surfaces:
-  - `src/pvtapp/widgets/`
-  - `src/pvtapp/style.py`
-  - `src/pvtapp/main.py`
-  - `tests/unit/test_pvtapp_*`
-  forbidden / shared surfaces:
-  - `AGENTS.md`
-  - `PVTSIM_DEPENDENCY_MAP.md`
-  - `.github/`
-  - `pyproject.toml`
-  - `requirements*.txt`
-  - `src/pvtapp/assignment_case.py`
-  - `src/pvtapp/component_catalog.py`
-  - `src/pvtapp/job_runner.py`
-  - `src/pvtapp/plus_fraction_policy.py`
-  - `src/pvtapp/schemas.py`
-  - `src/pvtcore/`
-  - `tests/validation/`
-  - `docs/validation/`
-  behind-main status:
-  - clean launch requested from current `main` controller baseline
-  last absorbed commit:
-  - none yet
-  upstream dependencies:
-  - starts from current `main`
-  blocked_by / blockers:
-  - none currently recorded
-  status:
-  - active and ready for worker spawn on general UI fixes
-  coordination rule:
-  - no other active lane conflicts are currently recorded
-  - widen ownership only through an explicit controller update
-  last structural update:
-  - 2026-04-13
-
-- directive / task name: phase-envelope kernel slice
-  owner / lane: Codex background `thermo` lane
-  branch:
-  - planned `codex/phase-envelope`
-  worktree:
-  - `C:/Users/olefa/.codex/worktrees/phase-envelope-pvt-sim_canon`
-  touched repo surfaces:
-  - `src/pvtcore/envelope/`
-  - `tests/unit/test_envelope.py`
-  - `tests/unit/test_envelope_continuation.py`
-  - `tests/validation/test_phase_envelope_release_gates.py`
-  - `tests/validation/test_phase_envelope_runtime_matrix.py`
-  forbidden / shared surfaces:
-  - `AGENTS.md`
-  - `PVTSIM_DEPENDENCY_MAP.md`
-  - `.github/`
-  - `pyproject.toml`
-  - `requirements*.txt`
-  - `src/pvtapp/`
-  - `src/pvtcore/experiments/tbp.py`
-  - `docs/tbp.md`
-  behind-main status:
-  - clean launch requested from current `main` controller baseline
-  last absorbed commit:
-  - none yet
-  upstream dependencies:
-  - starts from current `main`
-  blocked_by / blockers:
-  - none currently recorded
-  status:
-  - active background worker launch requested for one substantial envelope kernel slice
-  coordination rule:
-  - no overlap with the active `gui` surface
-  - stop immediately if the slice needs `pvtapp` or shared surfaces
-  last structural update:
-  - 2026-04-13
+- none currently active
+- 2026-04-14 cleanup retired temporary `gui`, `phase-envelope`, and
+  `runtime-surface` worktrees after desktop branch-switch conflicts
+- default from this point: use one normal feature branch in the current
+  checkout unless the user explicitly requests concurrent worktrees again
 
 ## Dependency refresh protocol
 
