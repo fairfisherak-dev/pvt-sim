@@ -234,7 +234,7 @@ class ResultsTableWidget(QWidget):
         self.sections_scroll.setWidgetResizable(True)
         self.sections_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.sections_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.sections_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.sections_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
         self._sections_host = QWidget()
         self._sections_layout = QVBoxLayout(self._sections_host)
@@ -400,44 +400,21 @@ class ResultsTableWidget(QWidget):
             )
             table.setColumnWidth(column, width)
 
-    def _column_fill_weights(self, table: QTableWidget) -> list[float]:
-        """Bias extra width toward the columns most likely to clip user-visible values."""
-        weights: list[float] = []
-        for column in range(table.columnCount()):
-            header = table.horizontalHeaderItem(column)
-            label = header.text().lower() if header is not None else ""
-            weight = 1.0
-            if table is self.summary_table:
-                weight = 0.92 if column == 0 else 1.08
-            elif table is self.composition_table:
-                if column == 0 and "component" in label:
-                    weight = 0.78
-                elif "feed" in label:
-                    weight = 0.92
-                elif "liquid" in label:
-                    weight = 1.10
-                elif "vapor" in label:
-                    weight = 1.18
-            elif table is self.details_table:
-                if table.columnCount() <= 2:
-                    if column == 0 and "component" in label:
-                        weight = 0.88
-                    else:
-                        weight = 1.12
-                elif column == 0 and "component" in label:
-                    weight = 0.84
-                elif "k-value" in label:
-                    weight = 1.12
-            weights.append(weight)
-        return weights
-
     def _expand_columns_to_fill(self, table: QTableWidget) -> None:
         """Fit table columns inside the right rail without hidden horizontal overflow."""
         column_count = table.columnCount()
         if column_count == 0:
             return
 
-        available_width = self.sections_scroll.viewport().width() - (2 * table.frameWidth())
+        candidate_widths = [
+            width
+            for width in (
+                table.viewport().width(),
+                self.sections_scroll.viewport().width() - (2 * table.frameWidth()),
+            )
+            if width > 0
+        ]
+        available_width = min(candidate_widths) if candidate_widths else 0
         if available_width <= 0:
             available_width = (
                 table.width()
@@ -449,7 +426,6 @@ class ResultsTableWidget(QWidget):
 
         widths: list[int] = []
         minimums: list[int] = []
-        maximums: list[int] = []
         for column in range(column_count):
             header = table.horizontalHeaderItem(column)
             header_label = header.text() if header is not None else ""
@@ -457,7 +433,6 @@ class ResultsTableWidget(QWidget):
             minimum = scale_metric(minimum, self._ui_scale, reference_scale=DEFAULT_UI_SCALE)
             maximum = scale_metric(maximum, self._ui_scale, reference_scale=DEFAULT_UI_SCALE)
             minimums.append(minimum)
-            maximums.append(maximum)
             widths.append(max(minimum, min(maximum, table.columnWidth(column))))
 
         occupied_width = sum(widths)
@@ -480,27 +455,12 @@ class ResultsTableWidget(QWidget):
                     overflow -= shrink
         else:
             slack = available_width - occupied_width
-            weights = self._column_fill_weights(table)
-            while slack > 0:
-                growable = [max(0, maximums[index] - widths[index]) for index in range(column_count)]
-                total_growable = sum(growable)
-                if total_growable <= 0:
-                    break
-                total_weight = sum(
-                    weights[index]
-                    for index in range(column_count)
-                    if growable[index] > 0
-                ) or float(column_count)
+            if slack > 0:
+                even_growth, remainder = divmod(slack, column_count)
                 for column in range(column_count):
-                    capacity = growable[column]
-                    if capacity <= 0 or slack <= 0:
-                        continue
-                    growth = min(
-                        capacity,
-                        max(1, int(round((slack * weights[column]) / total_weight))),
-                    )
-                    widths[column] += growth
-                    slack -= growth
+                    widths[column] += even_growth
+                    if column < remainder:
+                        widths[column] += 1
 
         for column, width in enumerate(widths):
             table.setColumnWidth(column, width)
