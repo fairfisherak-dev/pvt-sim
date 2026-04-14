@@ -1655,13 +1655,25 @@ def test_cce_results_surface_density_columns_and_plot(app: QApplication) -> None
     result = _cce_result()
 
     table = ResultsTableWidget()
+    table.resize(420, 900)
     table.display_result(result)
+    table.show()
+    app.processEvents()
     assert table.details_section.title() == "Densities"
     assert table.details_table.horizontalHeaderItem(1).text() == "Liquid Density"
     assert table.details_table.horizontalHeaderItem(2).text() == "Vapor Density"
     assert table.details_table.item(0, 1).text() == "648.20"
     assert table.details_table.item(0, 2).text() == "-"
     assert table.details_table.item(1, 2).text() == "128.60"
+    assert not table.sections_scroll.verticalScrollBar().isVisible()
+
+    details_widths = [
+        table.details_table.columnWidth(column)
+        for column in range(table.details_table.columnCount())
+    ]
+    unused_width = table.details_table.viewport().width() - sum(details_widths)
+    assert unused_width <= 20
+    assert max(details_widths) - min(details_widths) <= 12
 
     text = TextOutputWidget()
     text.display_result(result)
