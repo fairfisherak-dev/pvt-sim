@@ -188,6 +188,17 @@ A coherent slice includes:
 - a verified refactor step
 - any test-backed state worth preserving
 
+### Pragmatic Verification Rule
+
+Do not block checkpointing or integration on a pristine working tree or a
+fully green full-suite run.
+
+- Prefer the smallest relevant verification for the touched surface.
+- Known failures or incomplete slices are acceptable if they are called out
+  explicitly.
+- Preserve forward progress first; tighten correctness iteratively instead of
+  turning every checkpoint into a full cleanup pass.
+
 ## Worker Boundaries
 
 Workers may:
