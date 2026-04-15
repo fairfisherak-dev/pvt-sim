@@ -18,6 +18,7 @@ Usage
 """
 
 from .pedersen import (
+    PedersenTBPCutConstraint,
     PedersenSplitResult,
     split_plus_fraction_pedersen,
 )
@@ -36,6 +37,7 @@ from .lohrenz import (
 
 __all__ = [
     # Pedersen
+    "PedersenTBPCutConstraint",
     "PedersenSplitResult",
     "split_plus_fraction_pedersen",
     # Katz

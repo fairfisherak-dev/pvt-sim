@@ -157,6 +157,12 @@ QToolBar {{
   padding: {px(4)}px;
 }}
 
+QWidget#ToolbarUnitConverter {{
+  background: transparent;
+  border: 1px solid {palette['border_soft']};
+  border-radius: {px(8)}px;
+}}
+
 QStatusBar {{
   background: {palette['surface_bg']};
   border-top: 1px solid {palette['border_soft']};

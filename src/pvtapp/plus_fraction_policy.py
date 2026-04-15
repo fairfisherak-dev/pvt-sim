@@ -224,8 +224,13 @@ def describe_plus_fraction_policy(
     if plus_fraction.lumping_enabled:
         lumping_txt = f"on ({plus_fraction.lumping_n_groups} groups)"
 
-    return (
+    description = (
         f"{prefix}; split method {plus_fraction.split_method}, "
         f"split MW model {plus_fraction.split_mw_model}, "
         f"split to C{plus_fraction.max_carbon_number}, lumping {lumping_txt}"
     )
+    if plus_fraction.split_method == "pedersen":
+        description += f", Pedersen A/B from {plus_fraction.pedersen_solve_ab_from}"
+        if plus_fraction.tbp_cuts:
+            description += f" using {len(plus_fraction.tbp_cuts)} TBP cuts"
+    return description

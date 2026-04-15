@@ -204,6 +204,28 @@ def test_conditions_widget_builds_phase_envelope_config_with_continuation_tracer
     assert config.tracing_method is PhaseEnvelopeTracingMethod.CONTINUATION
 
 
+def test_conditions_widget_builds_tbp_config(app: QApplication) -> None:
+    widget = ConditionsInputWidget()
+    widget.set_calculation_type(CalculationType.TBP)
+    widget.tbp_cut_start_spin.setValue(7)
+    widget._set_tbp_cut_rows(
+        [
+            {"name": "C7-C9", "z": 0.020, "mw": 103.0, "sg": 0.74, "tb_k": 385.0},
+            {"name": "C12", "z": 0.015, "mw": 170.0, "sg": 0.77},
+            {"name": "C15-C18", "z": 0.015, "mw": 235.0, "sg": 0.80},
+        ]
+    )
+
+    config = widget.get_tbp_config()
+
+    assert config is not None
+    assert config.cut_start == 7
+    assert [cut.name for cut in config.cuts] == ["C7-C9", "C12", "C15-C18"]
+    assert [cut.z for cut in config.cuts] == pytest.approx([0.020, 0.015, 0.015])
+    assert config.cuts[0].tb_k == pytest.approx(385.0)
+    assert widget.eos_combo.isEnabled() is False
+
+
 def test_conditions_widget_builds_cce_config_from_exact_pressures(app: QApplication) -> None:
     widget = ConditionsInputWidget()
     widget.set_calculation_type(CalculationType.CCE)
@@ -241,7 +263,7 @@ def test_conditions_widget_builds_dl_config(app: QApplication) -> None:
     widget = ConditionsInputWidget()
     widget.set_calculation_type(CalculationType.DL)
     widget.dl_temperature.setValue(76.85)
-    widget.dl_bubble_pressure.setValue(150.0)
+    widget.set_dl_bubble_pressure_pa(1.5e7)
     widget.dl_p_end.setValue(10.0)
     widget.dl_n_steps.setValue(8)
 
@@ -258,7 +280,7 @@ def test_conditions_widget_builds_dl_config_from_exact_pressures(app: QApplicati
     widget = ConditionsInputWidget()
     widget.set_calculation_type(CalculationType.DL)
     widget.dl_temperature.setValue(76.85)
-    widget.dl_bubble_pressure.setValue(150.0)
+    widget.set_dl_bubble_pressure_pa(1.5e7)
     widget.dl_pressure_points.setText("50, 30, 10")
 
     config = widget.get_dl_config()
@@ -269,6 +291,21 @@ def test_conditions_widget_builds_dl_config_from_exact_pressures(app: QApplicati
     assert config.pressure_points_pa == pytest.approx([5.0e6, 3.0e6, 1.0e6])
     assert config.pressure_end_pa == pytest.approx(1.0e6)
     assert config.n_steps == 4
+
+
+def test_conditions_widget_accepts_dl_inputs_before_auto_bubble_is_derived(app: QApplication) -> None:
+    widget = ConditionsInputWidget()
+    widget.set_calculation_type(CalculationType.DL)
+    widget.dl_temperature.setValue(76.85)
+    widget.dl_p_end.setValue(10.0)
+    widget.dl_n_steps.setValue(8)
+
+    is_valid, message = widget.validate()
+
+    assert is_valid is True
+    assert message == ""
+    assert widget.dl_bubble_pressure.isReadOnly() is True
+    assert widget.dl_bubble_pressure.specialValueText() == "Auto"
 
 
 def test_conditions_widget_builds_separator_config(app: QApplication) -> None:
@@ -507,6 +544,33 @@ def test_conditions_widget_loads_cce_run_config_with_exact_pressures(app: QAppli
     assert widget.cce_p_end.value() == pytest.approx(100.0)
     assert widget.cce_n_steps.value() == 3
     assert widget.cce_pressure_points.text() == "150, 112, 100"
+
+
+def test_conditions_widget_loads_tbp_run_config(app: QApplication) -> None:
+    widget = ConditionsInputWidget()
+    config = RunConfig.model_validate(
+        {
+            "calculation_type": "tbp",
+            "tbp_config": {
+                "cut_start": 7,
+                "cuts": [
+                    {"name": "C7-C9", "z": 0.020, "mw": 103.0, "sg": 0.74, "tb_k": 385.0},
+                    {"name": "C12", "z": 0.015, "mw": 170.0, "sg": 0.77},
+                    {"name": "C15-C18", "z": 0.015, "mw": 235.0},
+                ],
+            },
+        }
+    )
+
+    widget.load_from_run_config(config)
+
+    assert widget.get_calculation_type() == CalculationType.TBP
+    assert widget.tbp_cut_start_spin.value() == 7
+    assert widget.tbp_cut_table.rowCount() == 3
+    assert widget.tbp_cut_table.item(0, 0).text() == "C7-C9"
+    assert widget.tbp_cut_table.item(0, 4).text() == "385.000000"
+    assert widget.tbp_cut_table.item(1, 2).text() == "170.000000"
+    assert widget.eos_combo.isEnabled() is False
 
 
 def test_conditions_widget_round_trips_non_round_exact_cce_pressures(app: QApplication) -> None:

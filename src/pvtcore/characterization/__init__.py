@@ -29,6 +29,7 @@ Or use individual components:
 
 # Plus-fraction splitting
 from .plus_splitting import (
+    PedersenTBPCutConstraint,
     PedersenSplitResult,
     split_plus_fraction_pedersen,
     KatzSplitResult,
@@ -97,6 +98,7 @@ from .pipeline import (
 
 __all__ = [
     # Plus-fraction splitting
+    "PedersenTBPCutConstraint",
     "PedersenSplitResult",
     "split_plus_fraction_pedersen",
     "KatzSplitResult",

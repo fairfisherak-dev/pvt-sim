@@ -26,6 +26,7 @@ from pvtapp.schemas import (
     RunConfig, RunResult, RunManifest, RunStatus,
     CalculationType, EOSType, PhaseEnvelopeTracingMethod,
     PlusFractionCharacterizationPreset,
+    TBPExperimentResult, TBPExperimentCutResult,
     PTFlashResult, PhaseEnvelopeResult, PhaseEnvelopePoint,
     CCEResult, CCEStepResult,
     BubblePointResult, DewPointResult,
@@ -176,6 +177,8 @@ def _raise_if_cancelled(
 
 
 _C2_TO_C6_IDS = ("C2", "C3", "IC4", "C4", "IC5", "C5", "C6")
+PLUS_FRACTION_TBP_Z_ABS_TOLERANCE = 1e-12
+PLUS_FRACTION_TBP_MW_ABS_TOLERANCE = 1e-9
 
 
 def _phase_envelope_component_fractions(config: RunConfig) -> Dict[str, float]:
@@ -671,6 +674,8 @@ def _build_inline_component(spec):
 
 def _resolve_config_characterization(config: RunConfig) -> RunConfig:
     """Resolve plus-fraction characterization policy into concrete runtime settings."""
+    if config.composition is None:
+        return config
     plus_fraction = config.composition.plus_fraction
     if plus_fraction is None:
         return config
@@ -692,9 +697,11 @@ def _load_component_inputs(config: RunConfig):
     from pvtcore.characterization import (
         BinaryInteractionOverride,
         CharacterizationConfig,
+        PedersenTBPCutConstraint,
         PlusFractionSpec,
         characterize_fluid,
     )
+    from pvtcore.experiments.tbp import simulate_tbp
     from pvtcore.models import load_components, resolve_component_id
 
     config = _resolve_config_characterization(config)
@@ -771,6 +778,32 @@ def _load_component_inputs(config: RunConfig):
             )
 
         plus_fraction = config.composition.plus_fraction
+        pedersen_tbp_cuts = None
+        if plus_fraction.tbp_cuts:
+            tbp_payload = [cut.model_dump(mode="python", exclude_none=True) for cut in plus_fraction.tbp_cuts]
+            tbp_summary = simulate_tbp(tbp_payload, cut_start=plus_fraction.cut_start)
+            if abs(float(tbp_summary.z_plus) - float(plus_fraction.z_plus)) > PLUS_FRACTION_TBP_Z_ABS_TOLERANCE:
+                raise ValueError(
+                    "plus_fraction.z_plus does not match the value derived from plus_fraction.tbp_cuts"
+                )
+            if (
+                abs(float(tbp_summary.mw_plus_g_per_mol) - float(plus_fraction.mw_plus_g_per_mol))
+                > PLUS_FRACTION_TBP_MW_ABS_TOLERANCE
+            ):
+                raise ValueError(
+                    "plus_fraction.mw_plus_g_per_mol does not match the value derived from plus_fraction.tbp_cuts"
+                )
+            pedersen_tbp_cuts = tuple(
+                PedersenTBPCutConstraint(
+                    name=cut.name,
+                    carbon_number=cut.carbon_number,
+                    carbon_number_end=cut.carbon_number_end,
+                    z=cut.mole_fraction,
+                    mw=cut.molecular_weight_g_per_mol,
+                    tb_k=cut.boiling_point_k,
+                )
+                for cut in tbp_summary.cuts
+            )
         characterized = characterize_fluid(
             resolved_feed,
             plus_fraction=PlusFractionSpec(
@@ -784,6 +817,8 @@ def _load_component_inputs(config: RunConfig):
                 n_end=plus_fraction.max_carbon_number,
                 split_method=plus_fraction.split_method,
                 split_mw_model=plus_fraction.split_mw_model,
+                pedersen_solve_ab_from=plus_fraction.pedersen_solve_ab_from,
+                pedersen_tbp_cuts=pedersen_tbp_cuts,
                 kij_default=0.0,
                 kij_overrides=override_entries,
                 lumping_enabled=plus_fraction.lumping_enabled,
@@ -870,8 +905,60 @@ def _prepare_fluid_inputs(config: RunConfig):
 
 def validate_runtime_config(config: RunConfig) -> None:
     """Validate runtime prerequisites without executing a calculation."""
+    if config.calculation_type == CalculationType.TBP:
+        execute_tbp(config)
+        return
     config = _resolve_config_characterization(config)
     _prepare_fluid_inputs(config)
+
+
+def execute_tbp(
+    config: RunConfig,
+    callback: Optional[ProgressCallback] = None,
+) -> TBPExperimentResult:
+    """Execute the bounded standalone TBP assay runtime."""
+    from pvtcore.experiments.tbp import simulate_tbp
+
+    tbp_config = config.tbp_config
+    if tbp_config is None:
+        raise ValueError("tbp_config is required for TBP calculation")
+
+    if callback:
+        callback.on_progress(config.run_id or "", 0.2, "Validating TBP assay cuts...")
+    _raise_if_cancelled(callback)
+
+    kernel_result = simulate_tbp(
+        [cut.model_dump(mode="python", exclude_none=True) for cut in tbp_config.cuts],
+        cut_start=tbp_config.cut_start,
+    )
+
+    if callback:
+        callback.on_progress(config.run_id or "", 0.85, "Processing TBP assay summary...")
+    _raise_if_cancelled(callback)
+
+    return TBPExperimentResult(
+        cut_start=kernel_result.cut_start,
+        cut_end=kernel_result.cut_end,
+        z_plus=float(kernel_result.z_plus),
+        mw_plus_g_per_mol=float(kernel_result.mw_plus_g_per_mol),
+        cuts=[
+            TBPExperimentCutResult(
+                name=cut.name,
+                carbon_number=cut.carbon_number,
+                carbon_number_end=cut.carbon_number_end,
+                mole_fraction=float(cut.mole_fraction),
+                normalized_mole_fraction=float(cut.normalized_mole_fraction),
+                cumulative_mole_fraction=float(cut.cumulative_mole_fraction),
+                molecular_weight_g_per_mol=float(cut.molecular_weight_g_per_mol),
+                normalized_mass_fraction=float(cut.normalized_mass_fraction),
+                cumulative_mass_fraction=float(cut.cumulative_mass_fraction),
+                specific_gravity=None if cut.specific_gravity is None else float(cut.specific_gravity),
+                boiling_point_k=None if cut.boiling_point_k is None else float(cut.boiling_point_k),
+                boiling_point_source=cut.boiling_point_source,
+            )
+            for cut in kernel_result.cuts
+        ],
+    )
 
 
 def execute_cce(
@@ -1281,6 +1368,7 @@ def run_calculation(
         bubble_point_result = None
         dew_point_result = None
         phase_envelope_result = None
+        tbp_result = None
         cce_result = None
         dl_result = None
         cvd_result = None
@@ -1297,6 +1385,9 @@ def run_calculation(
 
         elif config.calculation_type == CalculationType.PHASE_ENVELOPE:
             phase_envelope_result = execute_phase_envelope(config, callback)
+
+        elif config.calculation_type == CalculationType.TBP:
+            tbp_result = execute_tbp(config, callback)
 
         elif config.calculation_type == CalculationType.CCE:
             cce_result = execute_cce(config, callback)
@@ -1331,6 +1422,7 @@ def run_calculation(
             bubble_point_result=bubble_point_result,
             dew_point_result=dew_point_result,
             phase_envelope_result=phase_envelope_result,
+            tbp_result=tbp_result,
             cce_result=cce_result,
             dl_result=dl_result,
             cvd_result=cvd_result,

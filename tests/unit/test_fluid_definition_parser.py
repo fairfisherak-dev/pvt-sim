@@ -198,21 +198,24 @@ def test_schema_rejects_tbp_mw_plus_mismatch() -> None:
         characterize_from_schema(doc)
 
 
-def test_schema_rejects_gapped_tbp_cuts() -> None:
+def test_schema_accepts_gapped_tbp_cuts() -> None:
     doc = _tbp_example_doc()
     doc["fluid"]["plus_fraction"]["tbp_data"]["cuts"] = [
         {"name": "C7", "z": 0.02, "mw": 96.0},
-        {"name": "C9", "z": 0.03, "mw": 124.0},
+        {"name": "C9-C10", "z": 0.03, "mw": 130.0, "tb_k": 430.0},
     ]
 
-    with pytest.raises(ValidationError, match="contiguous"):
-        characterize_from_schema(doc)
+    res = characterize_from_schema(doc)
+
+    assert res.plus_fraction is not None
+    assert res.plus_fraction.z_plus == pytest.approx(0.05)
+    assert res.plus_fraction.mw_plus == pytest.approx((0.02 * 96.0 + 0.03 * 130.0) / 0.05)
 
 
 @pytest.mark.parametrize(
     ("cut_name", "match_text"),
     [
-        ("heavy", "must look like 'C7'"),
+        ("heavy", "must look like 'C7' or 'C7-C9'"),
         ("C6", "must not start below"),
     ],
 )
@@ -227,12 +230,16 @@ def test_schema_rejects_invalid_tbp_cut_names(
         characterize_from_schema(doc)
 
 
-def test_schema_rejects_fit_to_tbp_for_phase_1() -> None:
+def test_schema_accepts_fit_to_tbp_for_pedersen_characterization() -> None:
     doc = _tbp_example_doc()
     doc["fluid"]["plus_fraction"]["splitting"]["pedersen"]["solve_AB_from"] = "fit_to_tbp"
 
-    with pytest.raises(ConfigurationError, match="does not support Pedersen coefficient fitting"):
-        characterize_from_schema(doc)
+    res = characterize_from_schema(doc)
+
+    assert res.split_result is not None
+    assert res.split_result.solve_ab_from == "fit_to_tbp"
+    assert res.split_result.tbp_cut_rms_relative_error is not None
+    assert np.isclose(float(res.composition.sum()), 1.0)
 
 
 def test_repo_tbp_example_characterizes() -> None:

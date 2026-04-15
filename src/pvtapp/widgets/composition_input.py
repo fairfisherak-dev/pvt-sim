@@ -11,6 +11,7 @@ from PySide6.QtCore import QSettings, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QDoubleValidator
 from PySide6.QtWidgets import (
     QAbstractItemDelegate,
+    QAbstractItemView,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
@@ -46,6 +47,7 @@ from pvtapp.schemas import (
     InlineComponentSpec,
     PlusFractionEntry,
     PlusFractionCharacterizationPreset,
+    PlusFractionTBPCutEntry,
     PressureUnit,
     TemperatureUnit,
     pressure_from_pa,
@@ -385,6 +387,9 @@ class CompositionInputWidget(QWidget):
         self.plus_split_mw_model = NoWheelComboBox()
         self.plus_split_mw_model.addItems(["paraffin", "table"])
         self.plus_split_mw_model.setCurrentText("paraffin")
+        self.plus_pedersen_solve_ab_from = NoWheelComboBox()
+        self.plus_pedersen_solve_ab_from.addItem("balances", "balances")
+        self.plus_pedersen_solve_ab_from.addItem("fit_to_tbp", "fit_to_tbp")
         self.plus_lumping_enabled = QCheckBox("Enable lumping")
         self.plus_lumping_groups_spin = NoWheelSpinBox()
         self.plus_lumping_groups_spin.setRange(1, 200)
@@ -397,8 +402,41 @@ class CompositionInputWidget(QWidget):
         plus_form.addRow("Split To", self.plus_end_spin)
         plus_form.addRow("Split Method", self.plus_split_method)
         plus_form.addRow("Split MW Model", self.plus_split_mw_model)
+        plus_form.addRow("Pedersen A/B", self.plus_pedersen_solve_ab_from)
         plus_form.addRow("Lumping", self.plus_lumping_enabled)
         plus_form.addRow("Lumping Groups", self.plus_lumping_groups_spin)
+
+        self.plus_tbp_fit_widget = QWidget()
+        plus_tbp_layout = QVBoxLayout(self.plus_tbp_fit_widget)
+        plus_tbp_layout.setContentsMargins(0, 0, 0, 0)
+        plus_tbp_layout.setSpacing(8)
+        self.plus_tbp_fit_note = QLabel(
+            "Optional TBP cuts used when Pedersen A/B is solved from fit_to_tbp. "
+            "Enter ordered cuts such as C7, C7-C9, C10-C12. Gaps are allowed."
+        )
+        self.plus_tbp_fit_note.setWordWrap(True)
+        self.plus_tbp_fit_note.setStyleSheet("color: #9ca3af;")
+        plus_tbp_layout.addWidget(self.plus_tbp_fit_note)
+
+        self.plus_tbp_cut_table = QTableWidget(0, 5)
+        self.plus_tbp_cut_table.setHorizontalHeaderLabels(["Cut", "z", "MW (g/mol)", "SG", "Tb (K)"])
+        self.plus_tbp_cut_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.plus_tbp_cut_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.plus_tbp_cut_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.plus_tbp_cut_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.plus_tbp_cut_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.plus_tbp_cut_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.plus_tbp_cut_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        plus_tbp_layout.addWidget(self.plus_tbp_cut_table)
+
+        plus_tbp_button_row = QHBoxLayout()
+        self.plus_add_tbp_cut_btn = QPushButton("Add Cut")
+        self.plus_remove_tbp_cut_btn = QPushButton("Remove Selected")
+        plus_tbp_button_row.addWidget(self.plus_add_tbp_cut_btn)
+        plus_tbp_button_row.addWidget(self.plus_remove_tbp_cut_btn)
+        plus_tbp_button_row.addStretch()
+        plus_tbp_layout.addLayout(plus_tbp_button_row)
+        plus_form.addRow("TBP Cut Fit", self.plus_tbp_fit_widget)
         self.heavy_tabs.addTab(plus_page, "Plus Fraction")
 
         inline_page = QWidget()
@@ -441,6 +479,7 @@ class CompositionInputWidget(QWidget):
         self._on_heavy_mode_changed()
         self._refresh_plus_characterization_preview()
         self._sync_plus_lumping_state()
+        self._sync_plus_tbp_controls()
 
     @staticmethod
     def _configure_form_layout(layout: QFormLayout) -> None:
@@ -533,6 +572,67 @@ class CompositionInputWidget(QWidget):
             and self.plus_lumping_enabled.isChecked()
         )
         self.plus_lumping_groups_spin.setEnabled(enabled)
+
+    def _plus_tbp_fit_enabled(self) -> bool:
+        """Return whether the plus-fraction editor is using TBP-backed Pedersen fitting."""
+        return (
+            self._get_heavy_mode() == HEAVY_MODE_PLUS
+            and self.plus_split_method.currentText() == "pedersen"
+            and str(self.plus_pedersen_solve_ab_from.currentData()) == "fit_to_tbp"
+        )
+
+    def _sync_plus_tbp_controls(self) -> None:
+        """Show the plus-fraction TBP editor only when the runtime will actually use it."""
+        pedersen_active = self._get_heavy_mode() == HEAVY_MODE_PLUS and self.plus_split_method.currentText() == "pedersen"
+        self.plus_pedersen_solve_ab_from.setEnabled(pedersen_active)
+        if not pedersen_active:
+            balances_index = self.plus_pedersen_solve_ab_from.findData("balances")
+            if balances_index >= 0:
+                self.plus_pedersen_solve_ab_from.blockSignals(True)
+                self.plus_pedersen_solve_ab_from.setCurrentIndex(balances_index)
+                self.plus_pedersen_solve_ab_from.blockSignals(False)
+        self.plus_tbp_fit_widget.setVisible(self._plus_tbp_fit_enabled())
+        self.heavy_tabs.updateGeometry()
+        self.updateGeometry()
+
+    def _add_plus_tbp_cut_row(
+        self,
+        name: str = "",
+        z: str = "",
+        mw: str = "",
+        sg: str = "",
+        tb_k: str = "",
+    ) -> None:
+        """Append one TBP cut row to the plus-fraction fit table."""
+        row = self.plus_tbp_cut_table.rowCount()
+        self.plus_tbp_cut_table.insertRow(row)
+        self.plus_tbp_cut_table.setItem(row, 0, QTableWidgetItem(name))
+        self.plus_tbp_cut_table.setItem(row, 1, QTableWidgetItem(z))
+        self.plus_tbp_cut_table.setItem(row, 2, QTableWidgetItem(mw))
+        self.plus_tbp_cut_table.setItem(row, 3, QTableWidgetItem(sg))
+        self.plus_tbp_cut_table.setItem(row, 4, QTableWidgetItem(tb_k))
+
+    def _remove_selected_plus_tbp_cut_rows(self) -> None:
+        """Remove the selected TBP cut rows from the plus-fraction fit table."""
+        rows = sorted({index.row() for index in self.plus_tbp_cut_table.selectedIndexes()}, reverse=True)
+        for row in rows:
+            self.plus_tbp_cut_table.removeRow(row)
+
+    def _set_plus_tbp_cut_rows(self, cuts: list[dict[str, float | str]]) -> None:
+        """Replace the plus-fraction TBP fit table contents."""
+        self.plus_tbp_cut_table.blockSignals(True)
+        try:
+            self.plus_tbp_cut_table.setRowCount(0)
+            for cut in cuts:
+                self._add_plus_tbp_cut_row(
+                    name=str(cut["name"]),
+                    z=f"{float(cut['z']):.6f}",
+                    mw=f"{float(cut['mw']):.6f}",
+                    sg="" if cut.get("sg") is None else f"{float(cut['sg']):.6f}",
+                    tb_k="" if cut.get("tb_k") is None else f"{float(cut['tb_k']):.6f}",
+                )
+        finally:
+            self.plus_tbp_cut_table.blockSignals(False)
 
     def _find_special_row(self, role: str) -> Optional[int]:
         for row in range(self.table.rowCount()):
@@ -792,18 +892,23 @@ class CompositionInputWidget(QWidget):
         self.plus_end_spin.blockSignals(True)
         self.plus_split_method.blockSignals(True)
         self.plus_split_mw_model.blockSignals(True)
+        self.plus_pedersen_solve_ab_from.blockSignals(True)
         self.plus_lumping_enabled.blockSignals(True)
         self.plus_lumping_groups_spin.blockSignals(True)
         try:
             self.plus_end_spin.setValue(plus_fraction.max_carbon_number)
             self.plus_split_method.setCurrentText(plus_fraction.split_method)
             self.plus_split_mw_model.setCurrentText(plus_fraction.split_mw_model)
+            solve_index = self.plus_pedersen_solve_ab_from.findData(plus_fraction.pedersen_solve_ab_from)
+            if solve_index >= 0:
+                self.plus_pedersen_solve_ab_from.setCurrentIndex(solve_index)
             self.plus_lumping_enabled.setChecked(plus_fraction.lumping_enabled)
             self.plus_lumping_groups_spin.setValue(plus_fraction.lumping_n_groups)
         finally:
             self.plus_end_spin.blockSignals(False)
             self.plus_split_method.blockSignals(False)
             self.plus_split_mw_model.blockSignals(False)
+            self.plus_pedersen_solve_ab_from.blockSignals(False)
             self.plus_lumping_enabled.blockSignals(False)
             self.plus_lumping_groups_spin.blockSignals(False)
 
@@ -844,8 +949,10 @@ class CompositionInputWidget(QWidget):
             self.plus_end_spin.setEnabled(False)
             self.plus_split_method.setEnabled(False)
             self.plus_split_mw_model.setEnabled(False)
+            self.plus_pedersen_solve_ab_from.setEnabled(False)
             self.plus_lumping_enabled.setEnabled(False)
             self.plus_lumping_groups_spin.setEnabled(False)
+            self._sync_plus_tbp_controls()
             return
 
         preset = self._current_plus_characterization_preset()
@@ -860,6 +967,7 @@ class CompositionInputWidget(QWidget):
             self.plus_end_spin.blockSignals(True)
             self.plus_split_method.blockSignals(True)
             self.plus_split_mw_model.blockSignals(True)
+            self.plus_pedersen_solve_ab_from.blockSignals(True)
             self.plus_lumping_enabled.blockSignals(True)
             self.plus_lumping_groups_spin.blockSignals(True)
             try:
@@ -872,6 +980,7 @@ class CompositionInputWidget(QWidget):
                 self.plus_end_spin.blockSignals(False)
                 self.plus_split_method.blockSignals(False)
                 self.plus_split_mw_model.blockSignals(False)
+                self.plus_pedersen_solve_ab_from.blockSignals(False)
                 self.plus_lumping_enabled.blockSignals(False)
                 self.plus_lumping_groups_spin.blockSignals(False)
 
@@ -880,6 +989,7 @@ class CompositionInputWidget(QWidget):
         self.plus_split_mw_model.setEnabled(manual)
         self.plus_lumping_enabled.setEnabled(manual)
         self._sync_plus_lumping_state()
+        self._sync_plus_tbp_controls()
 
     def _scaled_metric(self, value: int) -> int:
         """Scale metrics relative to the current default desktop baseline."""
@@ -957,8 +1067,16 @@ class CompositionInputWidget(QWidget):
         self.plus_characterization_preset.currentIndexChanged.connect(self._on_cell_changed)
         self.plus_split_method.currentTextChanged.connect(self._on_cell_changed)
         self.plus_split_mw_model.currentTextChanged.connect(self._on_cell_changed)
+        self.plus_pedersen_solve_ab_from.currentIndexChanged.connect(self._on_cell_changed)
         self.plus_lumping_enabled.toggled.connect(self._sync_plus_lumping_state)
         self.plus_lumping_enabled.toggled.connect(self._on_cell_changed)
+        self.plus_split_method.currentTextChanged.connect(self._sync_plus_tbp_controls)
+        self.plus_pedersen_solve_ab_from.currentIndexChanged.connect(self._sync_plus_tbp_controls)
+        self.plus_tbp_cut_table.itemChanged.connect(self._on_cell_changed)
+        self.plus_add_tbp_cut_btn.clicked.connect(self._add_plus_tbp_cut_row)
+        self.plus_add_tbp_cut_btn.clicked.connect(self._on_cell_changed)
+        self.plus_remove_tbp_cut_btn.clicked.connect(self._remove_selected_plus_tbp_cut_rows)
+        self.plus_remove_tbp_cut_btn.clicked.connect(self._on_cell_changed)
 
         for spin in [self.plus_cut_start_spin, self.plus_end_spin, self.plus_lumping_groups_spin]:
             spin.valueChanged.connect(self._on_cell_changed)
@@ -1062,10 +1180,15 @@ class CompositionInputWidget(QWidget):
         self.plus_end_spin.setValue(45)
         self.plus_split_method.setCurrentText("pedersen")
         self.plus_split_mw_model.setCurrentText("paraffin")
+        balances_index = self.plus_pedersen_solve_ab_from.findData("balances")
+        if balances_index >= 0:
+            self.plus_pedersen_solve_ab_from.setCurrentIndex(balances_index)
         self.plus_lumping_enabled.setChecked(False)
         self.plus_lumping_groups_spin.setValue(8)
+        self.plus_tbp_cut_table.setRowCount(0)
         self._refresh_plus_characterization_preview()
         self._sync_plus_lumping_state()
+        self._sync_plus_tbp_controls()
 
         self.inline_component_id_edit.setText(INLINE_PSEUDO_LABEL)
         self.inline_name_edit.setText(INLINE_PSEUDO_LABEL)
@@ -1104,6 +1227,8 @@ class CompositionInputWidget(QWidget):
         if self._get_heavy_mode() != HEAVY_MODE_PLUS:
             return None, None
 
+        from pvtcore.experiments.tbp import simulate_tbp
+
         row = self._find_special_row(HEAVY_MODE_PLUS)
         label = self.plus_label_edit.text().strip() or PLUS_FRACTION_TOKEN
         z_text = self.plus_z_edit.text()
@@ -1117,14 +1242,66 @@ class CompositionInputWidget(QWidget):
         z_plus, error = self._parse_float(z_text, "Plus-fraction z+")
         if error is not None:
             return None, error
-        mw_plus, error = self._parse_float(self.plus_mw_edit.text(), "Plus-fraction MW+")
-        if error is not None:
-            return None, error
 
         sg_text = self.plus_sg_edit.text().strip()
         sg_plus = None
         if sg_text:
             sg_plus, error = self._parse_float(sg_text, "Plus-fraction SG+")
+            if error is not None:
+                return None, error
+
+        tbp_cuts: list[PlusFractionTBPCutEntry] | None = None
+        pedersen_solve_ab_from = str(self.plus_pedersen_solve_ab_from.currentData())
+        if self._plus_tbp_fit_enabled():
+            tbp_payload: list[dict[str, float | str]] = []
+            for table_row in range(self.plus_tbp_cut_table.rowCount()):
+                name_item = self.plus_tbp_cut_table.item(table_row, 0)
+                z_item = self.plus_tbp_cut_table.item(table_row, 1)
+                mw_item = self.plus_tbp_cut_table.item(table_row, 2)
+                sg_item = self.plus_tbp_cut_table.item(table_row, 3)
+                tb_k_item = self.plus_tbp_cut_table.item(table_row, 4)
+                if name_item is None or z_item is None or mw_item is None:
+                    return None, "Each TBP fit row must define Cut, z, and MW"
+                name_value = name_item.text().strip()
+                z_value = z_item.text().strip()
+                mw_value = mw_item.text().strip()
+                if not name_value or not z_value or not mw_value:
+                    return None, "Each TBP fit row must define Cut, z, and MW"
+                payload: dict[str, float | str] = {
+                    "name": name_value,
+                    "z": float(z_value),
+                    "mw": float(mw_value),
+                }
+                if sg_item is not None and sg_item.text().strip():
+                    payload["sg"] = float(sg_item.text().strip())
+                if tb_k_item is not None and tb_k_item.text().strip():
+                    payload["tb_k"] = float(tb_k_item.text().strip())
+                tbp_payload.append(payload)
+
+            if not tbp_payload:
+                return None, "TBP fit_to_tbp requires at least one TBP cut"
+
+            try:
+                tbp_summary = simulate_tbp(tbp_payload, cut_start=self.plus_cut_start_spin.value())
+            except Exception as exc:
+                return None, str(exc)
+            if abs(float(tbp_summary.z_plus) - float(z_plus)) > COMPOSITION_SUM_TOLERANCE:
+                return None, "Plus-fraction z+ must match the total derived from the TBP cuts"
+
+            mw_text = self.plus_mw_edit.text().strip()
+            if mw_text:
+                mw_entered, error = self._parse_float(mw_text, "Plus-fraction MW+")
+                if error is not None:
+                    return None, error
+                if abs(float(mw_entered) - float(tbp_summary.mw_plus_g_per_mol)) > 1e-6:
+                    return None, "Plus-fraction MW+ must match the value derived from the TBP cuts"
+            mw_plus = float(tbp_summary.mw_plus_g_per_mol)
+            tbp_cuts = [
+                PlusFractionTBPCutEntry.model_validate(payload)
+                for payload in tbp_payload
+            ]
+        else:
+            mw_plus, error = self._parse_float(self.plus_mw_edit.text(), "Plus-fraction MW+")
             if error is not None:
                 return None, error
 
@@ -1139,8 +1316,10 @@ class CompositionInputWidget(QWidget):
                 max_carbon_number=self.plus_end_spin.value(),
                 split_method=self.plus_split_method.currentText(),
                 split_mw_model=self.plus_split_mw_model.currentText(),
+                pedersen_solve_ab_from=pedersen_solve_ab_from,
                 lumping_enabled=self.plus_lumping_enabled.isChecked(),
                 lumping_n_groups=self.plus_lumping_groups_spin.value(),
+                tbp_cuts=tbp_cuts,
             )
             if not resolve_policy:
                 return plus_fraction, None
@@ -1722,10 +1901,19 @@ class CompositionInputWidget(QWidget):
             self.plus_end_spin.setValue(composition.plus_fraction.max_carbon_number)
             self.plus_split_method.setCurrentText(composition.plus_fraction.split_method)
             self.plus_split_mw_model.setCurrentText(composition.plus_fraction.split_mw_model)
+            solve_index = self.plus_pedersen_solve_ab_from.findData(composition.plus_fraction.pedersen_solve_ab_from)
+            if solve_index >= 0:
+                self.plus_pedersen_solve_ab_from.setCurrentIndex(solve_index)
             self.plus_lumping_enabled.setChecked(composition.plus_fraction.lumping_enabled)
             self.plus_lumping_groups_spin.setValue(composition.plus_fraction.lumping_n_groups)
+            self._set_plus_tbp_cut_rows(
+                []
+                if not composition.plus_fraction.tbp_cuts
+                else [cut.model_dump(mode="python", exclude_none=True) for cut in composition.plus_fraction.tbp_cuts]
+            )
             self._refresh_plus_characterization_preview()
             self._sync_plus_lumping_state()
+            self._sync_plus_tbp_controls()
         elif composition.inline_components:
             spec = composition.inline_components[0]
             inline_fraction = next(
