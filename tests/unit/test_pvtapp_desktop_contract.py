@@ -16,10 +16,12 @@ import pytest
 
 try:
     from PySide6.QtCore import QSettings, Qt
+    from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QAbstractItemView, QApplication, QMessageBox
 except ModuleNotFoundError:  # pragma: no cover - environment dependent
     QSettings = None  # type: ignore[assignment]
     Qt = None  # type: ignore[assignment]
+    QTest = None  # type: ignore[assignment]
     QAbstractItemView = None  # type: ignore[assignment]
     QApplication = None  # type: ignore[assignment]
     QMessageBox = None  # type: ignore[assignment]
@@ -47,6 +49,8 @@ from pvtapp.schemas import (
     SeparatorResult,
     SeparatorStageResult,
     SolverDiagnostics,
+    TBPExperimentCutResult,
+    TBPExperimentResult,
     PressureUnit,
     TemperatureUnit,
     pressure_from_pa,
@@ -210,6 +214,43 @@ def _bubble_point_plus_fraction_config() -> RunConfig:
     )
 
 
+def _pt_flash_plus_fraction_tbp_fit_config() -> RunConfig:
+    return _run_config(
+        {
+            "composition": {
+                "components": [
+                    {"component_id": "C1", "mole_fraction": 0.35},
+                    {"component_id": "C2", "mole_fraction": 0.20},
+                    {"component_id": "C3", "mole_fraction": 0.15},
+                ],
+                "plus_fraction": {
+                    "label": "C7+",
+                    "cut_start": 7,
+                    "z_plus": 0.30,
+                    "mw_plus_g_per_mol": 108.13333333333333,
+                    "sg_plus_60f": 0.82,
+                    "characterization_preset": "manual",
+                    "max_carbon_number": 12,
+                    "split_method": "pedersen",
+                    "split_mw_model": "paraffin",
+                    "pedersen_solve_ab_from": "fit_to_tbp",
+                    "tbp_cuts": [
+                        {"name": "C7", "z": 0.120, "mw": 96.0},
+                        {"name": "C8", "z": 0.100, "mw": 110.0},
+                        {"name": "C9", "z": 0.080, "mw": 124.0, "tb_k": 425.0},
+                    ],
+                },
+            },
+            "calculation_type": "pt_flash",
+            "eos_type": "peng_robinson",
+            "pt_flash_config": {
+                "pressure_pa": 5.0e6,
+                "temperature_k": 350.0,
+            },
+        }
+    )
+
+
 def _inline_pseudo_bubble_point_config() -> RunConfig:
     return _run_config(
         {
@@ -282,6 +323,22 @@ def _phase_envelope_config() -> RunConfig:
                 "temperature_min_k": 250.0,
                 "temperature_max_k": 420.0,
                 "n_points": 24,
+            },
+        }
+    )
+
+
+def _tbp_config() -> RunConfig:
+    return _run_config(
+        {
+            "calculation_type": "tbp",
+            "tbp_config": {
+                "cut_start": 7,
+                "cuts": [
+                    {"name": "C7", "z": 0.020, "mw": 96.0, "sg": 0.74},
+                    {"name": "C8", "z": 0.015, "mw": 110.0, "sg": 0.77},
+                    {"name": "C9", "z": 0.015, "mw": 124.0, "sg": 0.80},
+                ],
             },
         }
     )
@@ -445,6 +502,7 @@ DESKTOP_CONFIG_BUILDERS: tuple[Callable[[], RunConfig], ...] = (
     _bubble_point_config,
     _dew_point_config,
     _phase_envelope_config,
+    _tbp_config,
     _cce_config,
     _dl_config,
     _cvd_config,
@@ -754,7 +812,13 @@ RESULT_BUILDERS: tuple[tuple[str, Callable[[], RunResult], str, str], ...] = (
 def _assert_configs_equivalent(actual: RunConfig, expected: RunConfig) -> None:
     assert actual.calculation_type == expected.calculation_type
     assert actual.eos_type == expected.eos_type
-    assert actual.composition.model_dump(mode="json") == expected.composition.model_dump(mode="json")
+    if expected.composition is None:
+        assert actual.composition is None
+    else:
+        assert actual.composition is not None
+        assert actual.composition.model_dump(mode="json") == expected.composition.model_dump(
+            mode="json"
+        )
     assert actual.solver_settings.model_dump(mode="json") == expected.solver_settings.model_dump(mode="json")
 
     if expected.pt_flash_config is not None:
@@ -789,6 +853,12 @@ def _assert_configs_equivalent(actual: RunConfig, expected: RunConfig) -> None:
         )
         assert actual.phase_envelope_config.n_points == expected.phase_envelope_config.n_points
         assert actual.phase_envelope_config.tracing_method == expected.phase_envelope_config.tracing_method
+    elif expected.tbp_config is not None:
+        assert actual.tbp_config is not None
+        assert actual.tbp_config.cut_start == expected.tbp_config.cut_start
+        assert [cut.model_dump(mode="json") for cut in actual.tbp_config.cuts] == [
+            cut.model_dump(mode="json") for cut in expected.tbp_config.cuts
+        ]
     elif expected.cce_config is not None:
         assert actual.cce_config is not None
         assert actual.cce_config.temperature_k == pytest.approx(expected.cce_config.temperature_k)
@@ -844,7 +914,8 @@ def test_main_window_builds_all_supported_desktop_configs(
 ) -> None:
     config = builder()
 
-    window.composition_widget.set_composition(config.composition)
+    if config.composition is not None:
+        window.composition_widget.set_composition(config.composition)
     window.conditions_widget.load_from_run_config(config)
 
     rebuilt = window._build_config()
@@ -882,6 +953,41 @@ def test_main_window_loads_saved_run_inputs_from_artifact(
     assert rebuilt is not None
     _assert_configs_equivalent(rebuilt, config)
     assert window.status_label.text() == "Loaded inputs: saved-bubble"
+
+
+def test_main_window_round_trips_plus_fraction_tbp_fit_config(window: PVTSimulatorWindow) -> None:
+    config = _pt_flash_plus_fraction_tbp_fit_config()
+
+    window.composition_widget.set_composition(config.composition)
+    window.conditions_widget.load_from_run_config(config)
+
+    rebuilt = window._build_config()
+
+    assert rebuilt is not None
+    _assert_configs_equivalent(rebuilt, config)
+
+
+def test_main_window_loads_saved_tbp_run_inputs_from_artifact(
+    window: PVTSimulatorWindow,
+    tmp_path: Path,
+) -> None:
+    config = _tbp_config()
+    run_dir = tmp_path / "saved-tbp"
+    run_dir.mkdir()
+    with (run_dir / "config.json").open("w", encoding="utf-8") as handle:
+        json.dump(config.model_dump(mode="json"), handle, indent=2)
+
+    window._load_saved_run_inputs(str(run_dir))
+
+    rebuilt = window._build_config()
+
+    assert rebuilt is not None
+    _assert_configs_equivalent(rebuilt, config)
+    assert window.status_label.text() == "Loaded inputs: saved-tbp"
+    assert window.conditions_widget.get_calculation_type() == CalculationType.TBP
+    assert window.composition_widget.isHidden() is True
+    assert window.recommend_action.isEnabled() is False
+    assert window.recommend_btn.isEnabled() is False
 
 
 def test_main_window_loads_saved_run_inputs_preserving_inline_pseudo_units(
@@ -1051,6 +1157,55 @@ def test_main_window_round_trips_exact_dl_schedule(window: PVTSimulatorWindow) -
     assert rebuilt.dl_config.n_steps == 4
 
 
+def test_main_window_auto_calculates_dl_bubble_pressure_when_needed(
+    app: QApplication,
+    window: PVTSimulatorWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if QTest is None:
+        pytest.skip("PySide6 QtTest is not installed in this test environment")
+
+    observed: dict[str, RunConfig] = {}
+
+    def fake_execute_bubble_point(config: RunConfig) -> BubblePointResult:
+        observed["config"] = config
+        return BubblePointResult(
+            converged=True,
+            pressure_pa=9.5e6,
+            temperature_k=350.0,
+            iterations=5,
+            residual=1.0e-10,
+            stable_liquid=True,
+            liquid_composition={"C1": 0.55, "C10": 0.45},
+            vapor_composition={"C1": 0.80, "C10": 0.20},
+            k_values={"C1": 1.45, "C10": 0.62},
+        )
+
+    monkeypatch.setattr("pvtapp.main.execute_bubble_point", fake_execute_bubble_point)
+
+    window.composition_widget.set_composition(_pt_flash_config().composition)
+    window.conditions_widget.set_calculation_type(CalculationType.DL)
+    window.conditions_widget.dl_temperature.setValue(76.85)
+    window.conditions_widget.dl_p_end.setValue(10.0)
+    window.conditions_widget.dl_n_steps.setValue(8)
+
+    assert window.conditions_widget.get_dl_bubble_pressure_pa() is None
+    QTest.qWait(300)
+    app.processEvents()
+
+    assert observed["config"].calculation_type is CalculationType.BUBBLE_POINT
+    assert observed["config"].bubble_point_config is not None
+    assert observed["config"].bubble_point_config.temperature_k == pytest.approx(350.0)
+    assert window.conditions_widget.get_dl_bubble_pressure_pa() == pytest.approx(9.5e6)
+    assert window.conditions_widget.dl_bubble_pressure.value() == pytest.approx(95.0)
+
+    rebuilt = window._build_config()
+
+    assert rebuilt is not None
+    assert rebuilt.dl_config is not None
+    assert rebuilt.dl_config.bubble_pressure_pa == pytest.approx(9.5e6)
+
+
 def test_main_window_loads_assignment_case_via_generic_inputs(window: PVTSimulatorWindow) -> None:
     preset = build_assignment_desktop_preset(initials="TANS")
     config = _run_config(
@@ -1187,6 +1342,28 @@ def test_main_window_recommend_setup_surfaces_family_and_eos(
     assert "Current EOS: Peng-Robinson (1976)" in message
     assert "Best first-line workflows for this fluid: Dew Point, CVD, Separator, Phase Envelope" in message
     assert window.status_label.text() == "Recommendation ready"
+
+
+def test_main_window_recommend_setup_explains_tbp_boundary(
+    window: PVTSimulatorWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    messages: list[tuple[str, str]] = []
+
+    def fake_information(_parent, title: str, message: str):
+        messages.append((title, message))
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "information", fake_information)
+
+    window._load_run_config_into_inputs(_tbp_config())
+    window._recommend_setup()
+
+    assert messages
+    title, message = messages[-1]
+    assert title == "Recommendation Unavailable"
+    assert "standalone assay workflows" in message
+    assert "EOS-backed fluid calculations" in message
 
 
 @pytest.mark.parametrize(

@@ -91,6 +91,18 @@ def print_result_summary(result: RunResult) -> None:
                   f"{res.critical_point.temperature_k - 273.15:.2f} C, "
                   f"{res.critical_point.pressure_pa / 1e5:.2f} bar")
 
+    elif result.tbp_result:
+        res = result.tbp_result
+        print(f"\nTBP Results:")
+        print(f"  Cut Range: C{res.cut_start}-C{res.cut_end}")
+        print(f"  Cuts: {len(res.cuts)}")
+        print(f"  z+: {res.z_plus:.6f}")
+        print(f"  MW+: {res.mw_plus_g_per_mol:.3f} g/mol")
+        if res.characterization_context is not None:
+            ctx = res.characterization_context
+            print("  Runtime Bridge: aggregate-only")
+            print(f"  Bridge Label: {ctx.plus_fraction_label}")
+
     elif result.cce_result:
         res = result.cce_result
         print(f"\nCCE Results:")
@@ -202,8 +214,12 @@ def _cmd_validate(args) -> int:
         validate_runtime_config(config)
         print(f"Configuration valid: {args.config}")
         print(f"  Calculation type: {config.calculation_type.value}")
-        print(f"  Components: {len(config.composition.components)}")
-        print(f"  EOS: {config.eos_type.value}")
+        if config.composition is not None:
+            print(f"  Components: {len(config.composition.components)}")
+        elif config.tbp_config is not None:
+            print(f"  TBP cuts: {len(config.tbp_config.cuts)}")
+        if config.calculation_type.value != "tbp":
+            print(f"  EOS: {config.eos_type.value}")
         return 0
 
     except FileNotFoundError as e:

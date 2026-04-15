@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from pvtapp import __version__, __app_name__
+from pvtapp.capabilities import GUI_CALCULATION_TYPE_LABELS, is_gui_supported_calculation_type
 from pvtapp.plus_fraction_policy import resolve_plus_fraction_entry
 from pvtapp.recommendation_policy import format_run_recommendation, recommend_run_setup
 from pvtapp.schemas import (
@@ -42,6 +43,7 @@ from pvtapp.schemas import (
     ComponentEntry,
     CalculationType,
     EOSType,
+    SaturationPointConfig,
 )
 from pvtapp.widgets import (
     CompositionInputWidget,
@@ -60,7 +62,7 @@ from pvtapp.widgets import (
     ViewSpec,
 )
 from pvtapp.workers import CalculationThread
-from pvtapp.job_runner import load_run_config
+from pvtapp.job_runner import execute_bubble_point, load_run_config
 from pvtapp.style import (
     DEFAULT_THEME,
     DEFAULT_UI_SCALE,
@@ -153,13 +155,13 @@ class PVTSimulatorWindow(QMainWindow):
         # Edit menu
         edit_menu = menubar.addMenu("&Edit")
 
-        clear_action = QAction("Clear &Composition", self)
-        clear_action.triggered.connect(self._clear_composition)
-        edit_menu.addAction(clear_action)
+        self.clear_action = QAction("Clear &Composition", self)
+        self.clear_action.triggered.connect(self._clear_composition)
+        edit_menu.addAction(self.clear_action)
 
-        normalize_action = QAction("&Normalize Feed", self)
-        normalize_action.triggered.connect(self._normalize_composition)
-        edit_menu.addAction(normalize_action)
+        self.normalize_action = QAction("&Normalize Feed", self)
+        self.normalize_action.triggered.connect(self._normalize_composition)
+        edit_menu.addAction(self.normalize_action)
 
         # Run menu
         run_menu = menubar.addMenu("&Run")
@@ -182,10 +184,10 @@ class PVTSimulatorWindow(QMainWindow):
         self.recommend_action.triggered.connect(self._recommend_setup)
         run_menu.addAction(self.recommend_action)
 
-        validate_action = QAction("&Validate Input", self)
-        validate_action.setShortcut(QKeySequence("Ctrl+Shift+V"))
-        validate_action.triggered.connect(self._validate_input)
-        run_menu.addAction(validate_action)
+        self.validate_action = QAction("&Validate Input", self)
+        self.validate_action.setShortcut(QKeySequence("Ctrl+Shift+V"))
+        self.validate_action.triggered.connect(self._validate_input)
+        run_menu.addAction(self.validate_action)
 
         # View menu
         view_menu = menubar.addMenu("&View")
@@ -337,6 +339,9 @@ class PVTSimulatorWindow(QMainWindow):
         self._status_style_reset_timer.timeout.connect(
             lambda: self.status_label.setStyleSheet("")
         )
+        self._dl_bubble_preview_timer = QTimer(self)
+        self._dl_bubble_preview_timer.setSingleShot(True)
+        self._dl_bubble_preview_timer.timeout.connect(self._refresh_dl_bubble_pressure_preview)
 
     def _set_status_message(
         self,
@@ -361,7 +366,7 @@ class PVTSimulatorWindow(QMainWindow):
         self.conditions_widget.status_warning.connect(self._show_status_warning)
 
         # Composition edits drive derived views
-        self.composition_widget.composition_edited.connect(self._update_component_dependent_views)
+        self.composition_widget.composition_edited.connect(self._on_composition_edited)
         self.conditions_widget.conditions_changed.connect(self._sync_characterization_context)
         self._sync_characterization_context()
 
@@ -372,9 +377,34 @@ class PVTSimulatorWindow(QMainWindow):
         self.run_log_widget.result_activated.connect(self._on_logged_run_selected)
 
     @Slot()
+    def _on_composition_edited(self) -> None:
+        """Invalidate composition-derived previews before refreshing dependent views."""
+        self.conditions_widget.clear_dl_bubble_pressure()
+        self._update_component_dependent_views()
+        self._schedule_dl_bubble_pressure_preview()
+
+    @Slot()
     def _sync_characterization_context(self) -> None:
         """Keep plus-fraction auto-characterization aligned with the active workflow."""
-        self.composition_widget.set_calculation_type_context(self.conditions_widget.get_calculation_type())
+        calc_type = self.conditions_widget.get_calculation_type()
+        self.composition_widget.set_calculation_type_context(calc_type)
+        self._sync_input_mode_for_calculation_type(calc_type)
+        self._schedule_dl_bubble_pressure_preview()
+
+    @staticmethod
+    def _calculation_requires_composition(calc_type: CalculationType) -> bool:
+        """Return whether the desktop workflow requires the normal feed editor."""
+        return calc_type != CalculationType.TBP
+
+    def _sync_input_mode_for_calculation_type(self, calc_type: CalculationType) -> None:
+        """Keep the desktop input shell honest for standalone TBP runs."""
+        needs_composition = self._calculation_requires_composition(calc_type)
+        self.composition_widget.setVisible(needs_composition)
+        self.clear_action.setEnabled(needs_composition)
+        self.normalize_action.setEnabled(needs_composition)
+        self.recommend_action.setEnabled(needs_composition)
+        self.recommend_btn.setEnabled(needs_composition)
+        self._update_component_dependent_views()
 
     @property
     def ui_scale(self) -> float:
@@ -487,18 +517,143 @@ class PVTSimulatorWindow(QMainWindow):
     @Slot()
     def _update_component_dependent_views(self) -> None:
         """Update component-dependent panels (critical props / BIPs)."""
-        try:
-            component_ids = [cid for cid, _frac in self.composition_widget._get_runtime_components() if cid]
-        except Exception:
+        calc_type = self.conditions_widget.get_calculation_type()
+        if not self._calculation_requires_composition(calc_type):
             component_ids = []
+        else:
+            try:
+                component_ids = [cid for cid, _frac in self.composition_widget._get_runtime_components() if cid]
+            except Exception:
+                component_ids = []
 
         if hasattr(self, "critical_props_widget"):
             self.critical_props_widget.update_components(component_ids)
         if hasattr(self, "interaction_params_widget"):
             self.interaction_params_widget.update_components(component_ids)
 
+    def _build_preview_composition(self) -> Optional[FluidComposition]:
+        """Return the current feed when it is valid enough for a silent preview calculation."""
+        is_valid, _error = self.composition_widget.validate()
+        if not is_valid:
+            return None
+
+        components, error = self.composition_widget._resolve_runtime_components()
+        if error is not None:
+            return None
+
+        entries = [
+            ComponentEntry(component_id=raw_id, mole_fraction=frac)
+            for raw_id, _canonical_id, frac in components
+        ]
+
+        plus_fraction, plus_error = self.composition_widget._get_plus_fraction_entry()
+        if plus_error is not None:
+            return None
+
+        inline_components = []
+        inline_spec, inline_z, inline_error = self.composition_widget._get_inline_component_spec()
+        if inline_error is not None:
+            return None
+        if inline_spec is not None and inline_z is not None:
+            entries.append(ComponentEntry(component_id=inline_spec.component_id, mole_fraction=inline_z))
+            inline_components.append(inline_spec)
+
+        try:
+            return FluidComposition(
+                components=entries,
+                plus_fraction=plus_fraction,
+                inline_components=inline_components,
+            )
+        except Exception:
+            return None
+
+    def _schedule_dl_bubble_pressure_preview(self) -> None:
+        """Debounce the DL bubble-pressure preview so the field fills after inputs settle."""
+        if self.conditions_widget.get_calculation_type() != CalculationType.DL:
+            self._dl_bubble_preview_timer.stop()
+            return
+        if self.conditions_widget.get_dl_bubble_pressure_pa() is not None:
+            self._dl_bubble_preview_timer.stop()
+            return
+        if self._build_preview_composition() is None:
+            self._dl_bubble_preview_timer.stop()
+            return
+        self._dl_bubble_preview_timer.start(250)
+
+    @Slot()
+    def _refresh_dl_bubble_pressure_preview(self) -> None:
+        """Fill the DL bubble-pressure field from the active feed/temperature when possible."""
+        if self.conditions_widget.get_calculation_type() != CalculationType.DL:
+            return
+        if self.conditions_widget.get_dl_bubble_pressure_pa() is not None:
+            return
+
+        composition = self._build_preview_composition()
+        if composition is None:
+            return
+
+        try:
+            bubble_pressure_pa = self._derive_dl_bubble_pressure_pa(
+                composition,
+                self.conditions_widget.get_eos_type(),
+                self.conditions_widget.get_solver_settings(),
+            )
+        except Exception:
+            return
+
+        if (
+            self.conditions_widget.get_calculation_type() == CalculationType.DL
+            and self.conditions_widget.get_dl_bubble_pressure_pa() is None
+        ):
+            self.conditions_widget.set_dl_bubble_pressure_pa(bubble_pressure_pa)
+
+    def _derive_dl_bubble_pressure_pa(
+        self,
+        composition: FluidComposition,
+        eos_type: EOSType,
+        solver_settings,
+    ) -> float:
+        """Calculate the DL bubble pressure from the active feed and DL temperature."""
+        runtime_composition = composition
+        plus_fraction = composition.plus_fraction
+        if plus_fraction is not None:
+            resolved_plus = resolve_plus_fraction_entry(
+                composition.components,
+                plus_fraction,
+                CalculationType.DL,
+            )
+            if resolved_plus != plus_fraction:
+                runtime_composition = composition.model_copy(update={"plus_fraction": resolved_plus})
+
+        preview_config = RunConfig(
+            run_id="dl-autopb",
+            run_name="dl_auto_bubble",
+            calculation_type=CalculationType.BUBBLE_POINT,
+            eos_type=eos_type,
+            composition=runtime_composition,
+            bubble_point_config=SaturationPointConfig(
+                temperature_k=self.conditions_widget.get_dl_temperature_k(),
+            ),
+            solver_settings=solver_settings,
+        )
+        return float(execute_bubble_point(preview_config).pressure_pa)
+
+    def _reset_composition_inputs_silently(self) -> None:
+        """Clear the composition editor without prompting when a non-feed workflow is loaded."""
+        self.composition_widget.table.setRowCount(0)
+        if hasattr(self.composition_widget, "_reset_heavy_inputs"):
+            self.composition_widget._reset_heavy_inputs()
+        if hasattr(self.composition_widget, "_sync_table_height"):
+            self.composition_widget._sync_table_height()
+        if hasattr(self.composition_widget, "_update_sum"):
+            self.composition_widget._update_sum()
+        if hasattr(self.composition_widget, "composition_edited"):
+            self.composition_widget.composition_edited.emit()
+
     def _offer_feed_normalization_if_needed(self) -> bool:
         """Offer to normalize the entered feed instead of failing immediately."""
+        if not self._calculation_requires_composition(self.conditions_widget.get_calculation_type()):
+            return True
         total = self.composition_widget._get_sum()
         if total <= 0.0 or abs(total - 1.0) <= COMPOSITION_SUM_TOLERANCE:
             return True
@@ -525,14 +680,6 @@ class PVTSimulatorWindow(QMainWindow):
         Returns:
             RunConfig if valid, None otherwise
         """
-        if not self._offer_feed_normalization_if_needed():
-            return None
-
-        # Get and validate composition
-        composition = self.composition_widget.get_composition()
-        if composition is None:
-            return None
-
         # Get calculation type and settings
         calc_type = self.conditions_widget.get_calculation_type()
         eos_type = self.conditions_widget.get_eos_type()
@@ -542,11 +689,19 @@ class PVTSimulatorWindow(QMainWindow):
         config_kwargs = {
             "run_id": str(uuid.uuid4())[:8],
             "run_name": f"{calc_type.value}_{datetime.now().strftime('%H%M%S')}",
-            "composition": composition,
             "calculation_type": calc_type,
             "eos_type": eos_type,
             "solver_settings": solver_settings,
         }
+
+        if self._calculation_requires_composition(calc_type):
+            if not self._offer_feed_normalization_if_needed():
+                return None
+
+            composition = self.composition_widget.get_composition()
+            if composition is None:
+                return None
+            config_kwargs["composition"] = composition
 
         # Add calculation-specific config
         if calc_type == CalculationType.PT_FLASH:
@@ -573,6 +728,12 @@ class PVTSimulatorWindow(QMainWindow):
                 return None
             config_kwargs["phase_envelope_config"] = env_config
 
+        elif calc_type == CalculationType.TBP:
+            tbp_config = self.conditions_widget.get_tbp_config()
+            if tbp_config is None:
+                return None
+            config_kwargs["tbp_config"] = tbp_config
+
         elif calc_type == CalculationType.CCE:
             cce_config = self.conditions_widget.get_cce_config()
             if cce_config is None:
@@ -580,6 +741,19 @@ class PVTSimulatorWindow(QMainWindow):
             config_kwargs["cce_config"] = cce_config
 
         elif calc_type == CalculationType.DL:
+            assert composition is not None
+            bubble_pressure_pa = self.conditions_widget.get_dl_bubble_pressure_pa()
+            if bubble_pressure_pa is None:
+                try:
+                    bubble_pressure_pa = self._derive_dl_bubble_pressure_pa(
+                        composition,
+                        eos_type,
+                        solver_settings,
+                    )
+                except Exception as e:
+                    self._show_validation_error(str(e))
+                    return None
+                self.conditions_widget.set_dl_bubble_pressure_pa(bubble_pressure_pa)
             dl_config = self.conditions_widget.get_dl_config()
             if dl_config is None:
                 return None
@@ -605,6 +779,9 @@ class PVTSimulatorWindow(QMainWindow):
 
         try:
             config = RunConfig(**config_kwargs)
+            if config.composition is None:
+                return config
+
             plus_fraction = config.composition.plus_fraction
             if plus_fraction is None:
                 return config
@@ -630,9 +807,17 @@ class PVTSimulatorWindow(QMainWindow):
         status_message: Optional[str] = None,
     ) -> None:
         """Populate GUI inputs from a validated run configuration."""
-        self.composition_widget.set_composition(config.composition)
+        if not is_gui_supported_calculation_type(config.calculation_type):
+            raise ValueError(
+                f"Calculation type '{config.calculation_type.value}' is supported in the runtime/artifact layer "
+                "but is not currently editable from the desktop input panels."
+            )
+        if config.composition is None:
+            self._reset_composition_inputs_silently()
+        else:
+            self.composition_widget.set_composition(config.composition)
         self.conditions_widget.load_from_run_config(config)
-        self._update_component_dependent_views()
+        self._sync_characterization_context()
         if status_message is not None:
             self._set_status_message(status_message)
 
@@ -644,7 +829,10 @@ class PVTSimulatorWindow(QMainWindow):
     @staticmethod
     def _results_title_for_config(config: RunConfig) -> str:
         """Return a concise title for the active result surface."""
-        calc_title = config.calculation_type.value.replace("_", " ").title()
+        calc_title = GUI_CALCULATION_TYPE_LABELS.get(
+            config.calculation_type,
+            config.calculation_type.value.replace("_", " ").title(),
+        )
         return f"{calc_title} Results"
 
     def _start_calculation(self, config: RunConfig) -> None:
@@ -899,27 +1087,32 @@ class PVTSimulatorWindow(QMainWindow):
     @Slot()
     def _clear_composition(self) -> None:
         """Clear composition table."""
+        if not self._calculation_requires_composition(self.conditions_widget.get_calculation_type()):
+            return
         self.composition_widget._clear_all()
 
     @Slot()
     def _normalize_composition(self) -> None:
         """Normalize composition to sum to 1.0."""
+        if not self._calculation_requires_composition(self.conditions_widget.get_calculation_type()):
+            return
         self.composition_widget._normalize()
 
     @Slot()
     def _validate_input(self) -> None:
         """Validate all inputs and show result."""
-        if not self._offer_feed_normalization_if_needed():
-            return
+        calc_type = self.conditions_widget.get_calculation_type()
+        if self._calculation_requires_composition(calc_type):
+            if not self._offer_feed_normalization_if_needed():
+                return
 
-        # Validate composition
-        comp_valid, comp_error = self.composition_widget.validate()
-        if not comp_valid:
-            QMessageBox.warning(
-                self, "Validation Failed",
-                f"Composition error: {comp_error}"
-            )
-            return
+            comp_valid, comp_error = self.composition_widget.validate()
+            if not comp_valid:
+                QMessageBox.warning(
+                    self, "Validation Failed",
+                    f"Composition error: {comp_error}"
+                )
+                return
 
         # Validate conditions
         cond_valid, cond_error = self.conditions_widget.validate()
@@ -947,6 +1140,15 @@ class PVTSimulatorWindow(QMainWindow):
     @Slot()
     def _recommend_setup(self) -> None:
         """Analyze the current feed and surface advisory workflow/EOS guidance."""
+        calc_type = self.conditions_widget.get_calculation_type()
+        if not self._calculation_requires_composition(calc_type):
+            QMessageBox.information(
+                self,
+                "Recommendation Unavailable",
+                "TBP runs are standalone assay workflows. Feed/EOS setup recommendations apply only to EOS-backed fluid calculations.",
+            )
+            return
+
         if not self._offer_feed_normalization_if_needed():
             return
 

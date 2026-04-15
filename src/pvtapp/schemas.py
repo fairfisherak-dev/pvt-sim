@@ -55,6 +55,7 @@ class CalculationType(str, Enum):
     BUBBLE_POINT = "bubble_point"
     DEW_POINT = "dew_point"
     PHASE_ENVELOPE = "phase_envelope"
+    TBP = "tbp"
     CCE = "cce"
     DL = "differential_liberation"
     CVD = "cvd"
@@ -233,6 +234,65 @@ class ComponentEntry(BaseModel):
         return v
 
 
+class PlusFractionTBPCutEntry(BaseModel):
+    """Optional TBP cut used to constrain Pedersen plus-fraction fitting."""
+
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=50,
+        description="TBP cut label such as 'C7' or 'C7-C9'",
+    )
+    z: float = Field(
+        ...,
+        gt=0.0,
+        le=COMPOSITION_MAX,
+        description="Cut mole fraction on the assay basis",
+    )
+    mw: float = Field(
+        ...,
+        gt=0.0,
+        description="Cut molecular weight in g/mol",
+    )
+    sg: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Optional cut specific gravity",
+    )
+    carbon_number: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=200,
+        description="Optional explicit cut start carbon number; must match the name suffix/range when provided",
+    )
+    carbon_number_end: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=200,
+        description="Optional explicit cut end carbon number; must match the name suffix/range when provided",
+    )
+    tb_k: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Optional cut normal boiling point in Kelvin",
+    )
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("TBP cut name cannot be empty")
+        return normalized
+
+    @model_validator(mode='after')
+    def validate_cut_bounds(self) -> 'PlusFractionTBPCutEntry':
+        if self.carbon_number_end is not None and self.carbon_number is not None:
+            if self.carbon_number_end < self.carbon_number:
+                raise ValueError("carbon_number_end must be >= carbon_number")
+        return self
+
+
 class PlusFractionEntry(BaseModel):
     """Aggregate plus-fraction input for characterization."""
 
@@ -290,6 +350,10 @@ class PlusFractionEntry(BaseModel):
         default="paraffin",
         description="Pedersen SCN molecular-weight model",
     )
+    pedersen_solve_ab_from: Literal["balances", "fit_to_tbp"] = Field(
+        default="balances",
+        description="How Pedersen coefficients A/B are resolved when split_method='pedersen'",
+    )
     lumping_enabled: bool = Field(
         default=False,
         description="Whether to lump the detailed SCN split into a smaller pseudo set",
@@ -299,6 +363,10 @@ class PlusFractionEntry(BaseModel):
         ge=1,
         le=200,
         description="Target number of pseudo groups if lumping is enabled",
+    )
+    tbp_cuts: Optional[List[PlusFractionTBPCutEntry]] = Field(
+        default=None,
+        description="Optional ordered TBP cuts used to constrain Pedersen fit_to_tbp characterization",
     )
 
     @model_validator(mode='after')
@@ -312,6 +380,13 @@ class PlusFractionEntry(BaseModel):
             raise ValueError("max_carbon_number must be >= cut_start")
         if self.lumping_enabled and self.lumping_n_groups > (self.max_carbon_number - self.cut_start + 1):
             raise ValueError("lumping_n_groups cannot exceed the number of SCNs in the split range")
+        if self.tbp_cuts and self.split_method != "pedersen":
+            raise ValueError("tbp_cuts are only supported with split_method='pedersen'")
+        if self.pedersen_solve_ab_from == "fit_to_tbp":
+            if self.split_method != "pedersen":
+                raise ValueError("pedersen_solve_ab_from='fit_to_tbp' requires split_method='pedersen'")
+            if not self.tbp_cuts:
+                raise ValueError("pedersen_solve_ab_from='fit_to_tbp' requires tbp_cuts")
         return self
 
 
@@ -813,6 +888,81 @@ class SeparatorConfig(BaseModel):
         return self
 
 
+class TBPCutConfig(BaseModel):
+    """Single cut in the standalone TBP assay runtime."""
+
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=50,
+        description="TBP cut label such as 'C7' or 'C7-C9'",
+    )
+    z: float = Field(
+        ...,
+        gt=0.0,
+        le=COMPOSITION_MAX,
+        description="Cut mole fraction on the assay basis",
+    )
+    mw: float = Field(
+        ...,
+        gt=0.0,
+        description="Cut molecular weight in g/mol",
+    )
+    sg: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Optional cut specific gravity",
+    )
+    carbon_number: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=200,
+        description="Optional explicit cut start carbon number; must match the name suffix/range when provided",
+    )
+    carbon_number_end: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=200,
+        description="Optional explicit cut end carbon number; must match the name suffix/range when provided",
+    )
+    tb_k: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Optional cut normal boiling point in Kelvin",
+    )
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("TBP cut name cannot be empty")
+        return normalized
+
+    @model_validator(mode='after')
+    def validate_cut_bounds(self) -> 'TBPCutConfig':
+        if self.carbon_number_end is not None and self.carbon_number is not None:
+            if self.carbon_number_end < self.carbon_number:
+                raise ValueError("carbon_number_end must be >= carbon_number")
+        return self
+
+
+class TBPConfig(BaseModel):
+    """Configuration for the standalone TBP assay runtime."""
+
+    cuts: List[TBPCutConfig] = Field(
+        ...,
+        min_length=1,
+        description="Ordered non-overlapping TBP cuts, including optional intervals and gaps",
+    )
+    cut_start: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=200,
+        description="Optional expected first carbon number in the assay",
+    )
+
+
 # ==============================================================================
 # Main Run Configuration
 # ==============================================================================
@@ -836,9 +986,9 @@ class RunConfig(BaseModel):
     )
 
     # Fluid specification
-    composition: FluidComposition = Field(
-        ...,
-        description="Fluid composition"
+    composition: Optional[FluidComposition] = Field(
+        default=None,
+        description="Fluid composition for EOS-backed calculations",
     )
 
     # Calculation type and parameters
@@ -864,6 +1014,7 @@ class RunConfig(BaseModel):
     bubble_point_config: Optional[SaturationPointConfig] = None
     dew_point_config: Optional[SaturationPointConfig] = None
     phase_envelope_config: Optional[PhaseEnvelopeConfig] = None
+    tbp_config: Optional[TBPConfig] = None
     cce_config: Optional[CCEConfig] = None
     dl_config: Optional[DLConfig] = None
     cvd_config: Optional[CVDConfig] = None
@@ -878,6 +1029,19 @@ class RunConfig(BaseModel):
     @model_validator(mode='after')
     def validate_calculation_config(self) -> 'RunConfig':
         """Ensure the appropriate config is provided for the calculation type."""
+        if self.calculation_type == CalculationType.TBP:
+            if self.tbp_config is None:
+                raise ValueError("tbp_config is required for TBP calculation")
+            if self.composition is not None:
+                raise ValueError("TBP calculation uses tbp_config only and must not also define composition")
+            return self
+
+        if self.composition is None:
+            raise ValueError(f"composition is required for {self.calculation_type.value} calculation")
+
+        if self.tbp_config is not None:
+            raise ValueError("tbp_config is only valid for TBP calculations")
+
         if self.calculation_type == CalculationType.PT_FLASH:
             if self.pt_flash_config is None:
                 raise ValueError("pt_flash_config is required for PT_FLASH calculation")
@@ -1125,6 +1289,97 @@ class SeparatorResult(BaseModel):
     stages: List[SeparatorStageResult]
 
 
+class TBPExperimentCutResult(BaseModel):
+    """Cut-level results for the standalone TBP assay runtime."""
+
+    name: str
+    carbon_number: int
+    carbon_number_end: int = Field(
+        description="End carbon number for interval cuts; equals carbon_number for single cuts",
+    )
+    mole_fraction: float
+    normalized_mole_fraction: float
+    cumulative_mole_fraction: float
+    molecular_weight_g_per_mol: float
+    normalized_mass_fraction: float
+    cumulative_mass_fraction: float
+    specific_gravity: Optional[float] = None
+    boiling_point_k: Optional[float] = None
+    boiling_point_source: Optional[Literal["input", "estimated_soreide"]] = None
+
+
+class TBPCharacterizationContext(BaseModel):
+    """Aggregate heavy-end context derived from a standalone TBP assay."""
+
+    source: Literal["tbp_assay"] = Field(
+        default="tbp_assay",
+        description="Source used to derive this heavy-end bridge context",
+    )
+    bridge_status: Literal["aggregate_only"] = Field(
+        default="aggregate_only",
+        description="Current bridge fidelity into the broader runtime surface",
+    )
+    plus_fraction_label: str = Field(
+        ...,
+        min_length=1,
+        max_length=50,
+        description="Aggregate plus-fraction label that downstream workflows can reuse",
+    )
+    cut_start: int = Field(..., ge=1, le=200)
+    cut_end: int = Field(..., ge=1, le=200)
+    cut_count: int = Field(..., ge=1)
+    z_plus: float = Field(..., gt=0.0, le=COMPOSITION_MAX)
+    mw_plus_g_per_mol: float = Field(..., gt=0.0)
+    sg_plus_60f: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Aggregate plus-fraction specific gravity when explicitly available",
+    )
+    notes: List[str] = Field(
+        default_factory=list,
+        description="Auditable limitations and handoff notes for downstream runtime reuse",
+    )
+
+
+class TBPExperimentResult(BaseModel):
+    """Results from a standalone TBP assay run."""
+
+    cut_start: int
+    cut_end: int
+    z_plus: float
+    mw_plus_g_per_mol: float
+    cuts: List[TBPExperimentCutResult]
+    characterization_context: Optional[TBPCharacterizationContext] = None
+
+    @model_validator(mode='after')
+    def populate_characterization_context(self) -> 'TBPExperimentResult':
+        if self.characterization_context is not None:
+            return self
+
+        notes = [
+            (
+                "Aggregate-only runtime bridge derived from the TBP assay; "
+                "downstream split, lumping, BIP, and EOS choices remain separate."
+            )
+        ]
+        if any(cut.specific_gravity is not None for cut in self.cuts):
+            notes.append(
+                "SG+ is not auto-derived from cut-level specific gravities in the current bridge."
+            )
+
+        self.characterization_context = TBPCharacterizationContext(
+            plus_fraction_label=f"C{self.cut_start}+",
+            cut_start=self.cut_start,
+            cut_end=self.cut_end,
+            cut_count=len(self.cuts),
+            z_plus=self.z_plus,
+            mw_plus_g_per_mol=self.mw_plus_g_per_mol,
+            sg_plus_60f=None,
+            notes=notes,
+        )
+        return self
+
+
 # ==============================================================================
 # Run Result Container
 # ==============================================================================
@@ -1153,6 +1408,7 @@ class RunResult(BaseModel):
     bubble_point_result: Optional[BubblePointResult] = None
     dew_point_result: Optional[DewPointResult] = None
     phase_envelope_result: Optional[PhaseEnvelopeResult] = None
+    tbp_result: Optional[TBPExperimentResult] = None
     cce_result: Optional[CCEResult] = None
     dl_result: Optional[DLResult] = None
     cvd_result: Optional[CVDResult] = None

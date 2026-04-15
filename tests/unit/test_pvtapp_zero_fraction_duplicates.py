@@ -254,6 +254,49 @@ def test_plus_fraction_mode_round_trips_advanced_characterization_fields(app: QA
     assert reloaded.plus_lumping_groups_spin.isEnabled() is True
 
 
+def test_plus_fraction_mode_round_trips_tbp_fit_controls(app: QApplication) -> None:
+    widget = CompositionInputWidget()
+    widget.table.setRowCount(0)
+    widget._add_component_row("C1", 0.95)
+    widget.heavy_mode.setCurrentIndex(widget.heavy_mode.findData(HEAVY_MODE_PLUS))
+    widget.plus_characterization_preset.setCurrentIndex(
+        widget.plus_characterization_preset.findData(PlusFractionCharacterizationPreset.MANUAL)
+    )
+    widget.plus_cut_start_spin.setValue(7)
+    widget.plus_z_edit.setText("0.05")
+    widget.plus_sg_edit.setText("0.82")
+    widget.plus_split_method.setCurrentText("pedersen")
+    fit_index = widget.plus_pedersen_solve_ab_from.findData("fit_to_tbp")
+    widget.plus_pedersen_solve_ab_from.setCurrentIndex(fit_index)
+    widget._set_plus_tbp_cut_rows(
+        [
+            {"name": "C7", "z": 0.020, "mw": 96.0},
+            {"name": "C8", "z": 0.015, "mw": 110.0},
+            {"name": "C9", "z": 0.015, "mw": 124.0, "tb_k": 425.0},
+        ]
+    )
+
+    composition = widget.get_composition()
+
+    assert composition is not None
+    assert composition.plus_fraction is not None
+    assert composition.plus_fraction.pedersen_solve_ab_from == "fit_to_tbp"
+    assert composition.plus_fraction.mw_plus_g_per_mol == pytest.approx(108.6)
+    assert composition.plus_fraction.tbp_cuts is not None
+    assert len(composition.plus_fraction.tbp_cuts) == 3
+    assert composition.plus_fraction.tbp_cuts[2].tb_k == pytest.approx(425.0)
+
+    reloaded = CompositionInputWidget()
+    reloaded.set_composition(composition)
+
+    assert reloaded.heavy_mode.currentData() == HEAVY_MODE_PLUS
+    assert str(reloaded.plus_pedersen_solve_ab_from.currentData()) == "fit_to_tbp"
+    assert reloaded.plus_tbp_fit_widget.isHidden() is False
+    assert reloaded.plus_tbp_cut_table.rowCount() == 3
+    assert reloaded.plus_tbp_cut_table.item(2, 0).text() == "C9"
+    assert reloaded.plus_tbp_cut_table.item(2, 4).text() == "425.000000"
+
+
 def test_auto_plus_fraction_policy_tracks_workflow_context(app: QApplication) -> None:
     widget = CompositionInputWidget()
     widget.table.setRowCount(0)

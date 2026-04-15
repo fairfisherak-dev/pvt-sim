@@ -19,7 +19,11 @@ from ..core.errors import CharacterizationError, CompositionError, ValidationErr
 from ..models.component import Component, get_components_cached
 from .plus_splitting.katz import KatzSplitResult, split_plus_fraction_katz
 from .plus_splitting.lohrenz import LohrenzSplitResult, split_plus_fraction_lohrenz
-from .plus_splitting.pedersen import PedersenSplitResult, split_plus_fraction_pedersen
+from .plus_splitting.pedersen import (
+    PedersenSplitResult,
+    PedersenTBPCutConstraint,
+    split_plus_fraction_pedersen,
+)
 from .scn_properties import SCNProperties, get_scn_properties
 from .pseudo_correlations import (
     ParaffinFitCorrelation,
@@ -67,6 +71,8 @@ class CharacterizationConfig:
     lumping_enabled: bool = False
     lumping_n_groups: int = 8
     lumping_method: str = "contiguous"
+    pedersen_solve_ab_from: str = "balances"
+    pedersen_tbp_cuts: Sequence[PedersenTBPCutConstraint] | None = None
 
 
 @dataclass(frozen=True)
@@ -463,6 +469,8 @@ def characterize_fluid(
             n_start=plus_fraction.n_start,
             n_end=cfg.n_end,
             scn_mw_fn=scn_mw_fn,
+            solve_ab_from=cfg.pedersen_solve_ab_from,
+            tbp_cuts=cfg.pedersen_tbp_cuts,
         )
     elif split_method == "katz":
         split = split_plus_fraction_katz(

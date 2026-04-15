@@ -7,6 +7,7 @@ import importlib
 import numpy as np
 import pytest
 
+from pvtapp.capabilities import is_gui_supported_calculation_type
 from pvtapp.schemas import CalculationType
 from pvtcore.io import characterize_from_schema
 
@@ -66,8 +67,9 @@ def test_tbp_module_runs_a_cut_resolved_assay() -> None:
     assert np.allclose(result.cumulative_mole_fractions, [0.4, 0.7, 1.0])
 
 
-def test_tbp_is_not_a_pvtapp_calculation_type() -> None:
-    assert "tbp" not in {member.value for member in CalculationType}
+def test_tbp_is_runtime_and_desktop_input_supported() -> None:
+    assert CalculationType.TBP.value == "tbp"
+    assert is_gui_supported_calculation_type(CalculationType.TBP) is True
 
 
 def test_tbp_cuts_are_supported_via_schema_characterization_path() -> None:
@@ -76,3 +78,14 @@ def test_tbp_cuts_are_supported_via_schema_characterization_path() -> None:
     assert res.plus_fraction is not None
     assert np.isclose(res.plus_fraction.z_plus, 0.05)
     assert np.isclose(float(res.composition.sum()), 1.0)
+
+
+def test_tbp_cuts_support_pedersen_fit_to_tbp_via_schema_characterization_path() -> None:
+    doc = _tbp_schema_doc()
+    doc["fluid"]["plus_fraction"]["splitting"]["pedersen"]["solve_AB_from"] = "fit_to_tbp"
+
+    res = characterize_from_schema(doc)
+
+    assert res.split_result is not None
+    assert res.split_result.solve_ab_from == "fit_to_tbp"
+    assert res.split_result.tbp_cut_rms_relative_error is not None

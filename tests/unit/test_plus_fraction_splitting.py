@@ -1,7 +1,10 @@
 import numpy as np
 import pytest
 
-from pvtcore.characterization.plus_splitting.pedersen import split_plus_fraction_pedersen
+from pvtcore.characterization.plus_splitting.pedersen import (
+    PedersenTBPCutConstraint,
+    split_plus_fraction_pedersen,
+)
 
 
 def test_pedersen_split_closes_mass_and_mw_balance() -> None:
@@ -26,3 +29,25 @@ def test_pedersen_split_rejects_invalid_inputs() -> None:
         split_plus_fraction_pedersen(z_plus=0.1, MW_plus=0.0)
     with pytest.raises(ValueError):
         split_plus_fraction_pedersen(z_plus=0.1, MW_plus=200.0, n_start=10, n_end=7)
+
+
+def test_pedersen_split_supports_fit_to_tbp_mode() -> None:
+    tbp_cuts = (
+        PedersenTBPCutConstraint(name="C7", carbon_number=7, carbon_number_end=7, z=0.020, mw=96.0),
+        PedersenTBPCutConstraint(name="C8", carbon_number=8, carbon_number_end=8, z=0.015, mw=110.0),
+        PedersenTBPCutConstraint(name="C9", carbon_number=9, carbon_number_end=9, z=0.015, mw=124.0),
+    )
+
+    res = split_plus_fraction_pedersen(
+        z_plus=0.05,
+        MW_plus=108.6,
+        n_start=7,
+        n_end=12,
+        solve_ab_from="fit_to_tbp",
+        tbp_cuts=tbp_cuts,
+    )
+
+    assert res.solve_ab_from == "fit_to_tbp"
+    assert res.tbp_cut_rms_relative_error is not None
+    assert res.tbp_cut_rms_relative_error < 0.35
+    assert float(res.z.sum()) == pytest.approx(0.05, abs=1e-10)

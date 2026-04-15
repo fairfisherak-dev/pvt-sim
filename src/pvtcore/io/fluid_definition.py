@@ -20,6 +20,7 @@ from ..characterization.pipeline import (
     BinaryInteractionOverride,
     CharacterizationConfig,
     CharacterizationResult,
+    PedersenTBPCutConstraint,
     PlusFractionSpec,
     characterize_fluid,
 )
@@ -33,12 +34,15 @@ TBP_VALUE_REL_TOLERANCE: float = 1e-9
 
 @dataclass(frozen=True)
 class TBPCut:
-    """Single phase-1 TBP cut used for aggregate plus-fraction reduction."""
+    """Single TBP cut used for aggregate plus-fraction reduction."""
 
     name: str
     carbon_number: int
+    carbon_number_end: int
     z: float
     mw: float
+    sg: float | None = None
+    tb_k: float | None = None
 
 
 def _as_mapping(value: Any, path: str) -> Mapping[str, Any]:
@@ -99,15 +103,41 @@ def _parse_target_end(target_end: str) -> int:
     return _as_int(n_str, "fluid.plus_fraction.splitting.target_end")
 
 
-def _parse_tbp_cut_name(name: str, path: str) -> int:
-    name = name.strip()
-    if len(name) < 2 or not name.startswith("C") or not name[1:].isdigit():
+def _parse_tbp_cut_name(name: str, path: str) -> tuple[int, int]:
+    name = name.strip().replace(" ", "").upper()
+    if len(name) >= 2 and name.startswith("C") and name[1:].isdigit():
+        carbon_number = int(name[1:])
+        return carbon_number, carbon_number
+    if not name.startswith("C") or "-" not in name:
         raise ValidationError(
-            "TBP cut name must look like 'C7' in phase 1.",
+            "TBP cut name must look like 'C7' or 'C7-C9'.",
             parameter=path,
             value=name,
         )
-    return int(name[1:])
+    left, right = name.split("-", maxsplit=1)
+    if not left.startswith("C") or not left[1:].isdigit():
+        raise ValidationError(
+            "TBP cut name must look like 'C7' or 'C7-C9'.",
+            parameter=path,
+            value=name,
+        )
+    if right.startswith("C"):
+        right = right[1:]
+    if not right.isdigit():
+        raise ValidationError(
+            "TBP cut name must look like 'C7' or 'C7-C9'.",
+            parameter=path,
+            value=name,
+        )
+    carbon_start = int(left[1:])
+    carbon_end = int(right)
+    if carbon_end < carbon_start:
+        raise ValidationError(
+            "TBP cut range end must be >= range start.",
+            parameter=path,
+            value=name,
+        )
+    return carbon_start, carbon_end
 
 
 def _parse_tbp_cuts(
@@ -125,13 +155,13 @@ def _parse_tbp_cuts(
 
     cuts: list[TBPCut] = []
     seen_names: set[str] = set()
-    previous_carbon_number: int | None = None
+    previous_carbon_number_end: int | None = None
 
     for i, cut_obj in enumerate(cuts_obj):
         cut_path = f"{path}.cuts[{i}]"
         cut_map = _as_mapping(cut_obj, cut_path)
         name = _as_str(_get_required(cut_map, "name", cut_path), f"{cut_path}.name")
-        carbon_number = _parse_tbp_cut_name(name, f"{cut_path}.name")
+        carbon_number, carbon_number_end = _parse_tbp_cut_name(name, f"{cut_path}.name")
         if name in seen_names:
             raise ValidationError(
                 "TBP cut names must be unique.",
@@ -145,7 +175,7 @@ def _parse_tbp_cuts(
                 value=name,
                 cut_start=cut_start,
             )
-        if previous_carbon_number is None:
+        if previous_carbon_number_end is None:
             if carbon_number != cut_start:
                 raise ValidationError(
                     "The first TBP cut must start at fluid.plus_fraction.cut_start.",
@@ -153,15 +183,21 @@ def _parse_tbp_cuts(
                     value=name,
                     cut_start=cut_start,
                 )
-        elif carbon_number != previous_carbon_number + 1:
+        elif carbon_number <= previous_carbon_number_end:
             raise ValidationError(
-                "TBP cuts must be contiguous one-carbon cuts in phase 1.",
+                "TBP cuts must be ordered, non-overlapping, and strictly increasing.",
                 parameter=f"{cut_path}.name",
                 value=name,
             )
 
         z = _as_float(_get_required(cut_map, "z", cut_path), f"{cut_path}.z")
         mw = _as_float(_get_required(cut_map, "mw", cut_path), f"{cut_path}.mw")
+        sg = None
+        if "sg" in cut_map:
+            sg = _as_float(cut_map["sg"], f"{cut_path}.sg")
+        tb_k = None
+        if "tb_k" in cut_map:
+            tb_k = _as_float(cut_map["tb_k"], f"{cut_path}.tb_k")
         if z <= 0.0:
             raise ValidationError(
                 "TBP cut mole fraction must be positive.",
@@ -175,9 +211,19 @@ def _parse_tbp_cuts(
                 value=mw,
             )
 
-        cuts.append(TBPCut(name=name, carbon_number=carbon_number, z=z, mw=mw))
+        cuts.append(
+            TBPCut(
+                name=name,
+                carbon_number=carbon_number,
+                carbon_number_end=carbon_number_end,
+                z=z,
+                mw=mw,
+                sg=sg,
+                tb_k=tb_k,
+            )
+        )
         seen_names.add(name)
-        previous_carbon_number = carbon_number
+        previous_carbon_number_end = carbon_number_end
 
     z_plus = sum(cut.z for cut in cuts)
     if z_plus <= 0.0:
@@ -261,6 +307,18 @@ def _map_split_method(method: str) -> str:
         config_key="fluid.plus_fraction.splitting.method",
         value=method,
         supported=["pedersen", "katz", "lohrenz"],
+    )
+
+
+def _map_pedersen_solve_ab_from(mode: str) -> str:
+    mode_l = mode.strip().lower()
+    if mode_l in {"balances", "fit_to_tbp"}:
+        return mode_l
+    raise ConfigurationError(
+        "Unsupported Pedersen coefficient solve mode.",
+        config_key="fluid.plus_fraction.splitting.pedersen.solve_AB_from",
+        value=mode,
+        supported=["balances", "fit_to_tbp"],
     )
 
 
@@ -410,18 +468,31 @@ def characterize_from_schema(doc: Mapping[str, Any]) -> CharacterizationResult:
             _get_optional(ped, "mw_model", "MWn = 14n - 4"),
             "fluid.plus_fraction.splitting.pedersen.mw_model",
         )
-        solve_ab_from = _as_str(
-            _get_optional(ped, "solve_AB_from", "balances"),
-            "fluid.plus_fraction.splitting.pedersen.solve_AB_from",
-        )
-        if tbp_cuts is not None and solve_ab_from.strip().lower() != "balances":
-            raise ConfigurationError(
-                "TBP-backed characterization does not support Pedersen coefficient fitting from TBP data in phase 1.",
-                config_key="fluid.plus_fraction.splitting.pedersen.solve_AB_from",
-                value=solve_ab_from,
-                supported=["balances"],
+        solve_ab_from = _map_pedersen_solve_ab_from(
+            _as_str(
+                _get_optional(ped, "solve_AB_from", "balances"),
+                "fluid.plus_fraction.splitting.pedersen.solve_AB_from",
             )
-        cfg = replace(cfg, split_mw_model=_map_split_mw_model(mw_model))
+        )
+        pedersen_tbp_cuts = None
+        if tbp_cuts is not None:
+            pedersen_tbp_cuts = tuple(
+                PedersenTBPCutConstraint(
+                    name=cut.name,
+                    carbon_number=cut.carbon_number,
+                    carbon_number_end=cut.carbon_number_end,
+                    z=cut.z,
+                    mw=cut.mw,
+                    tb_k=cut.tb_k,
+                )
+                for cut in tbp_cuts
+            )
+        cfg = replace(
+            cfg,
+            split_mw_model=_map_split_mw_model(mw_model),
+            pedersen_solve_ab_from=solve_ab_from,
+            pedersen_tbp_cuts=pedersen_tbp_cuts,
+        )
 
         lumping = _get_optional(plus_block, "lumping", {})
         lumping = _as_mapping(lumping, "fluid.plus_fraction.lumping")

@@ -11,6 +11,8 @@ import numpy as np
 from PySide6.QtCore import QEvent, QPoint, QSize, Qt, Signal
 from PySide6.QtGui import QDoubleValidator, QIntValidator
 from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QAbstractSpinBox,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
@@ -37,6 +39,7 @@ from pvtapp.schemas import (
     RunConfig,
     PTFlashConfig,
     PhaseEnvelopeConfig,
+    TBPConfig,
     CCEConfig,
     SaturationPointConfig,
     DLConfig,
@@ -187,6 +190,10 @@ class ConditionsInputWidget(QWidget):
         # Phase Envelope config
         self.phase_env_widget = self._create_phase_envelope_widget()
         self.config_stack.addWidget(self.phase_env_widget)
+
+        # TBP config
+        self.tbp_widget = self._create_tbp_widget()
+        self.config_stack.addWidget(self.tbp_widget)
 
         # Bubble-point config
         self.bubble_widget = self._create_bubble_point_widget()
@@ -402,6 +409,51 @@ class ConditionsInputWidget(QWidget):
 
         return widget
 
+    def _create_tbp_widget(self) -> QWidget:
+        """Create standalone TBP assay configuration widget."""
+        widget = QGroupBox("TBP Settings")
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        note = QLabel(
+            "Standalone TBP assay. Enter ordered cuts such as C7, C7-C9, C10-C12. "
+            "Gaps are allowed; EOS and feed composition are not used for this workflow. "
+            "Optional Tb values are in Kelvin."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #9ca3af;")
+        layout.addWidget(note)
+
+        form_layout = QFormLayout()
+        self._configure_form_layout(form_layout)
+        self.tbp_cut_start_spin = NoWheelSpinBox()
+        self.tbp_cut_start_spin.setRange(1, 200)
+        self.tbp_cut_start_spin.setValue(7)
+        form_layout.addRow("Cut Start:", self.tbp_cut_start_spin)
+        layout.addLayout(form_layout)
+
+        self.tbp_cut_table = QTableWidget(0, 5)
+        self.tbp_cut_table.setHorizontalHeaderLabels(["Cut", "z", "MW (g/mol)", "SG", "Tb (K)"])
+        self.tbp_cut_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.tbp_cut_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.tbp_cut_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.tbp_cut_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.tbp_cut_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.tbp_cut_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.tbp_cut_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        layout.addWidget(self.tbp_cut_table)
+
+        button_row = QHBoxLayout()
+        self.add_tbp_cut_btn = QPushButton("Add Cut")
+        self.remove_tbp_cut_btn = QPushButton("Remove Selected")
+        button_row.addWidget(self.add_tbp_cut_btn)
+        button_row.addWidget(self.remove_tbp_cut_btn)
+        button_row.addStretch()
+        layout.addLayout(button_row)
+
+        return widget
+
     def _create_saturation_point_widget(
         self,
         *,
@@ -540,9 +592,16 @@ class ConditionsInputWidget(QWidget):
 
         bubble_layout = QHBoxLayout()
         self.dl_bubble_pressure = NoWheelDoubleSpinBox()
-        self.dl_bubble_pressure.setRange(0.01, 10000)
-        self.dl_bubble_pressure.setValue(150)
+        self.dl_bubble_pressure.setRange(0.0, 10000)
+        self.dl_bubble_pressure.setValue(0.0)
         self.dl_bubble_pressure.setDecimals(2)
+        self.dl_bubble_pressure.setSpecialValueText("Auto")
+        self.dl_bubble_pressure.setReadOnly(True)
+        self.dl_bubble_pressure.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self._register_focus_tooltip(
+            self.dl_bubble_pressure,
+            "Auto-calculated from the active fluid composition and temperature when the configuration is built.",
+        )
         self.dl_pressure_unit = NoWheelComboBox()
         self._populate_pressure_units(self.dl_pressure_unit, PressureUnit.BAR)
         self._configure_unit_row(bubble_layout, self.dl_bubble_pressure, self.dl_pressure_unit)
@@ -702,11 +761,65 @@ class ConditionsInputWidget(QWidget):
                 temperature_c=float(stage.get("temperature_c", 25.0)),
             )
 
+    def _add_tbp_cut_row(
+        self,
+        *,
+        name: str = "",
+        z: str = "",
+        mw: str = "",
+        sg: str = "",
+        tb_k: str = "",
+    ) -> None:
+        """Append a TBP cut row."""
+        row = self.tbp_cut_table.rowCount()
+        self.tbp_cut_table.insertRow(row)
+        self.tbp_cut_table.setItem(row, 0, QTableWidgetItem(name))
+        self.tbp_cut_table.setItem(row, 1, QTableWidgetItem(z))
+        self.tbp_cut_table.setItem(row, 2, QTableWidgetItem(mw))
+        self.tbp_cut_table.setItem(row, 3, QTableWidgetItem(sg))
+        self.tbp_cut_table.setItem(row, 4, QTableWidgetItem(tb_k))
+
+    def _remove_selected_tbp_cut_rows(self) -> None:
+        """Remove selected TBP cut rows."""
+        rows = sorted({index.row() for index in self.tbp_cut_table.selectedIndexes()}, reverse=True)
+        for row in rows:
+            self.tbp_cut_table.removeRow(row)
+        self.conditions_changed.emit()
+
+    def _set_tbp_cut_rows(self, cuts: list[dict[str, float | str]]) -> None:
+        """Replace the TBP cut table contents."""
+        self.tbp_cut_table.blockSignals(True)
+        try:
+            self.tbp_cut_table.setRowCount(0)
+            for cut in cuts:
+                sg_value = cut.get("sg")
+                tb_k_value = cut.get("tb_k")
+                self._add_tbp_cut_row(
+                    name=str(cut.get("name", "")),
+                    z=f"{float(cut.get('z', 0.0)):.6f}" if "z" in cut else "",
+                    mw=f"{float(cut.get('mw', 0.0)):.6f}" if "mw" in cut else "",
+                    sg="" if sg_value in {None, ""} else f"{float(sg_value):.6f}",
+                    tb_k="" if tb_k_value in {None, ""} else f"{float(tb_k_value):.6f}",
+                )
+        finally:
+            self.tbp_cut_table.blockSignals(False)
+
+    @staticmethod
+    def _coerce_tbp_cut_start_from_name(name: str) -> Optional[int]:
+        match = re.fullmatch(r"[cC](\d+)(?:\s*-\s*[cC]?(\d+))?", name.strip())
+        if match is None:
+            return None
+        return int(match.group(1))
+
     def _connect_signals(self) -> None:
         """Connect widget signals."""
         self.calc_type_combo.currentIndexChanged.connect(self._on_calc_type_changed)
         self.pressure_edit.textChanged.connect(self._validate_pressure)
         self.temperature_edit.textChanged.connect(self._validate_temperature)
+        self.tbp_cut_start_spin.valueChanged.connect(self._emit_conditions_changed)
+        self.tbp_cut_table.itemChanged.connect(self._emit_conditions_changed)
+        self.add_tbp_cut_btn.clicked.connect(self._add_tbp_cut_row)
+        self.remove_tbp_cut_btn.clicked.connect(self._remove_selected_tbp_cut_rows)
         self.bubble_temperature.textChanged.connect(self._emit_conditions_changed)
         self.dew_temperature.textChanged.connect(self._emit_conditions_changed)
         self.bubble_pressure_guess.textChanged.connect(self._emit_conditions_changed)
@@ -715,8 +828,7 @@ class ConditionsInputWidget(QWidget):
         self.cce_p_start.valueChanged.connect(self._on_cce_schedule_inputs_changed)
         self.cce_p_end.valueChanged.connect(self._on_cce_schedule_inputs_changed)
         self.cce_n_steps.valueChanged.connect(self._on_cce_schedule_inputs_changed)
-        self.dl_temperature.valueChanged.connect(self._emit_conditions_changed)
-        self.dl_bubble_pressure.valueChanged.connect(self._emit_conditions_changed)
+        self.dl_temperature.valueChanged.connect(self._on_dl_temperature_changed)
         self.dl_p_end.valueChanged.connect(self._emit_conditions_changed)
         self.dl_n_steps.valueChanged.connect(self._emit_conditions_changed)
         self.cce_pressure_points.textChanged.connect(self._on_cce_pressure_points_changed)
@@ -748,6 +860,8 @@ class ConditionsInputWidget(QWidget):
             self.config_stack.setCurrentWidget(self.dew_widget)
         elif calc_type == CalculationType.PHASE_ENVELOPE:
             self.config_stack.setCurrentWidget(self.phase_env_widget)
+        elif calc_type == CalculationType.TBP:
+            self.config_stack.setCurrentWidget(self.tbp_widget)
         elif calc_type == CalculationType.CCE:
             self.config_stack.setCurrentWidget(self.cce_widget)
         elif calc_type == CalculationType.DL:
@@ -759,6 +873,11 @@ class ConditionsInputWidget(QWidget):
         else:
             self.config_stack.setCurrentWidget(self.placeholder_widget)
 
+        eos_enabled = calc_type != CalculationType.TBP
+        self.eos_combo.setEnabled(eos_enabled)
+        self.eos_combo.setToolTip(
+            "" if eos_enabled else "EOS selection is not used for standalone TBP assay runs."
+        )
         self.config_stack.updateGeometry()
         self.updateGeometry()
         self.conditions_changed.emit()
@@ -989,6 +1108,11 @@ class ConditionsInputWidget(QWidget):
             self._dl_temperature_unit_value = new_unit
         self.conditions_changed.emit()
 
+    def _on_dl_temperature_changed(self, *_args) -> None:
+        """Invalidate the cached DL bubble-pressure preview when temperature changes."""
+        self.clear_dl_bubble_pressure()
+        self.conditions_changed.emit()
+
     def _on_dl_pressure_unit_changed(self, *_args) -> None:
         """Convert visible DL pressures when the unit selector changes."""
         new_unit = self._coerce_combo_enum(self.dl_pressure_unit.currentData(), PressureUnit)
@@ -1000,6 +1124,42 @@ class ConditionsInputWidget(QWidget):
             self._dl_pressure_unit_value = new_unit
         self._sync_dl_pressure_affordances()
         self.conditions_changed.emit()
+
+    def get_dl_temperature_k(self) -> float:
+        """Return the current DL temperature in Kelvin."""
+        temperature_unit = self._coerce_combo_enum(
+            self.dl_temperature_unit.currentData(),
+            TemperatureUnit,
+        )
+        return temperature_to_k(self.dl_temperature.value(), temperature_unit)
+
+    def get_dl_bubble_pressure_pa(self) -> Optional[float]:
+        """Return the cached DL bubble pressure in Pa when available."""
+        pressure_unit = self._coerce_combo_enum(
+            self.dl_pressure_unit.currentData(),
+            PressureUnit,
+        )
+        bubble_value = float(self.dl_bubble_pressure.value())
+        if bubble_value <= 0.0:
+            return None
+        return pressure_to_pa(bubble_value, pressure_unit)
+
+    def set_dl_bubble_pressure_pa(self, pressure_pa: Optional[float]) -> None:
+        """Update the display-only DL bubble-pressure preview."""
+        pressure_unit = self._coerce_combo_enum(
+            self.dl_pressure_unit.currentData(),
+            PressureUnit,
+        )
+        display_value = 0.0 if pressure_pa is None else pressure_from_pa(pressure_pa, pressure_unit)
+        self.dl_bubble_pressure.blockSignals(True)
+        try:
+            self.dl_bubble_pressure.setValue(display_value)
+        finally:
+            self.dl_bubble_pressure.blockSignals(False)
+
+    def clear_dl_bubble_pressure(self) -> None:
+        """Reset the display-only DL bubble-pressure preview to auto mode."""
+        self.set_dl_bubble_pressure_pa(None)
 
     def get_calculation_type(self) -> CalculationType:
         """Get selected calculation type."""
@@ -1067,6 +1227,16 @@ class ConditionsInputWidget(QWidget):
         method_index = self.env_tracing_method.findData(config.tracing_method)
         if method_index >= 0:
             self.env_tracing_method.setCurrentIndex(method_index)
+
+    def set_tbp_config(self, config: TBPConfig) -> None:
+        """Load TBP config into widget controls."""
+        cut_start = config.cut_start
+        if cut_start is None and config.cuts:
+            cut_start = self._coerce_tbp_cut_start_from_name(config.cuts[0].name) or 7
+        self.tbp_cut_start_spin.setValue(7 if cut_start is None else cut_start)
+        self._set_tbp_cut_rows(
+            [cut.model_dump(mode="python", exclude_none=True) for cut in config.cuts]
+        )
 
     def set_bubble_point_config(self, config: SaturationPointConfig) -> None:
         """Load bubble-point config into widget controls."""
@@ -1158,7 +1328,7 @@ class ConditionsInputWidget(QWidget):
             self.dl_pressure_unit.setCurrentIndex(p_index)
 
         self.dl_temperature.setValue(temperature_from_k(config.temperature_k, temperature_unit))
-        self.dl_bubble_pressure.setValue(pressure_from_pa(config.bubble_pressure_pa, pressure_unit))
+        self.set_dl_bubble_pressure_pa(config.bubble_pressure_pa)
         if config.pressure_end_pa is not None:
             self.dl_p_end.setValue(pressure_from_pa(config.pressure_end_pa, pressure_unit))
         if config.n_steps is not None:
@@ -1167,6 +1337,32 @@ class ConditionsInputWidget(QWidget):
             self._format_pressure_points(config.pressure_points_pa, pressure_unit)
         )
         self._sync_dl_pressure_affordances()
+
+    def _get_dl_schedule_inputs(
+        self,
+    ) -> tuple[float, PressureUnit, TemperatureUnit, Optional[list[float]], Optional[float], int]:
+        """Parse the current DL schedule inputs independent of bubble-pressure derivation."""
+        temperature_unit = self._coerce_combo_enum(
+            self.dl_temperature_unit.currentData(),
+            TemperatureUnit,
+        )
+        pressure_unit = self._coerce_combo_enum(
+            self.dl_pressure_unit.currentData(),
+            PressureUnit,
+        )
+        t_k = temperature_to_k(self.dl_temperature.value(), temperature_unit)
+        pressure_points_pa = self._parse_pressure_points(
+            self.dl_pressure_points.text(),
+            pressure_unit,
+        )
+        if pressure_points_pa is not None:
+            normalized_text = self._format_pressure_points(pressure_points_pa, pressure_unit)
+            if self.dl_pressure_points.text().strip() != normalized_text:
+                self.dl_pressure_points.setText(normalized_text)
+            return t_k, pressure_unit, temperature_unit, pressure_points_pa, None, len(pressure_points_pa) + 1
+
+        p_end_pa = pressure_to_pa(self.dl_p_end.value(), pressure_unit)
+        return t_k, pressure_unit, temperature_unit, None, p_end_pa, self.dl_n_steps.value()
 
     def set_cvd_config(self, config: CVDConfig) -> None:
         """Load CVD config into widget controls."""
@@ -1213,6 +1409,10 @@ class ConditionsInputWidget(QWidget):
             if config.phase_envelope_config is None:
                 raise ValueError("RunConfig missing phase_envelope_config")
             self.set_phase_envelope_config(config.phase_envelope_config)
+        elif config.calculation_type == CalculationType.TBP:
+            if config.tbp_config is None:
+                raise ValueError("RunConfig missing tbp_config")
+            self.set_tbp_config(config.tbp_config)
         elif config.calculation_type == CalculationType.CCE:
             if config.cce_config is None:
                 raise ValueError("RunConfig missing cce_config")
@@ -1293,6 +1493,59 @@ class ConditionsInputWidget(QWidget):
                     PhaseEnvelopeTracingMethod,
                 ),
             )
+        except Exception as e:
+            self.validation_error.emit(str(e))
+            return None
+
+    def get_tbp_config(self) -> Optional[TBPConfig]:
+        """Get standalone TBP assay configuration if valid."""
+        try:
+            cuts: list[dict[str, float | str]] = []
+            for row in range(self.tbp_cut_table.rowCount()):
+                name_item = self.tbp_cut_table.item(row, 0)
+                z_item = self.tbp_cut_table.item(row, 1)
+                mw_item = self.tbp_cut_table.item(row, 2)
+                sg_item = self.tbp_cut_table.item(row, 3)
+                tb_k_item = self.tbp_cut_table.item(row, 4)
+
+                name = "" if name_item is None else name_item.text().strip()
+                z_text = "" if z_item is None else z_item.text().strip()
+                mw_text = "" if mw_item is None else mw_item.text().strip()
+                sg_text = "" if sg_item is None else sg_item.text().strip()
+                tb_k_text = "" if tb_k_item is None else tb_k_item.text().strip()
+
+                if not any((name, z_text, mw_text, sg_text, tb_k_text)):
+                    continue
+                if not name:
+                    raise ValueError(f"TBP row {row + 1} cut name is required")
+                if not z_text:
+                    raise ValueError(f"TBP row {row + 1} z is required")
+                if not mw_text:
+                    raise ValueError(f"TBP row {row + 1} MW is required")
+
+                cut_payload: dict[str, float | str] = {
+                    "name": name,
+                    "z": float(z_text),
+                    "mw": float(mw_text),
+                }
+                if sg_text:
+                    cut_payload["sg"] = float(sg_text)
+                if tb_k_text:
+                    cut_payload["tb_k"] = float(tb_k_text)
+                cuts.append(cut_payload)
+
+            config = TBPConfig(
+                cuts=cuts,
+                cut_start=self.tbp_cut_start_spin.value(),
+            )
+
+            from pvtcore.experiments.tbp import simulate_tbp
+
+            simulate_tbp(
+                [cut.model_dump(mode="python", exclude_none=True) for cut in config.cuts],
+                cut_start=config.cut_start,
+            )
+            return config
         except Exception as e:
             self.validation_error.emit(str(e))
             return None
@@ -1432,25 +1685,16 @@ class ConditionsInputWidget(QWidget):
     def get_dl_config(self) -> Optional[DLConfig]:
         """Get DL configuration if valid."""
         try:
-            temperature_unit = self._coerce_combo_enum(
-                self.dl_temperature_unit.currentData(),
-                TemperatureUnit,
+            t_k, pressure_unit, temperature_unit, pressure_points_pa, p_end_pa, n_steps = (
+                self._get_dl_schedule_inputs()
             )
-            pressure_unit = self._coerce_combo_enum(
-                self.dl_pressure_unit.currentData(),
-                PressureUnit,
-            )
-            t_k = temperature_to_k(self.dl_temperature.value(), temperature_unit)
-            bubble_pressure_pa = pressure_to_pa(self.dl_bubble_pressure.value(), pressure_unit)
-            pressure_points_pa = self._parse_pressure_points(
-                self.dl_pressure_points.text()
-                ,
-                pressure_unit,
-            )
+            bubble_pressure_pa = self.get_dl_bubble_pressure_pa()
+            if bubble_pressure_pa is None:
+                self.validation_error.emit(
+                    "Bubble pressure is auto-calculated from the active fluid composition and DL temperature."
+                )
+                return None
             if pressure_points_pa is not None:
-                normalized_text = self._format_pressure_points(pressure_points_pa, pressure_unit)
-                if self.dl_pressure_points.text().strip() != normalized_text:
-                    self.dl_pressure_points.setText(normalized_text)
                 return DLConfig(
                     temperature_k=t_k,
                     bubble_pressure_pa=bubble_pressure_pa,
@@ -1459,8 +1703,7 @@ class ConditionsInputWidget(QWidget):
                     temperature_unit=temperature_unit,
                 )
 
-            p_end_pa = pressure_to_pa(self.dl_p_end.value(), pressure_unit)
-
+            assert p_end_pa is not None
             if bubble_pressure_pa <= p_end_pa:
                 self.validation_error.emit(
                     "Bubble pressure must be greater than end pressure for DL"
@@ -1471,7 +1714,7 @@ class ConditionsInputWidget(QWidget):
                 temperature_k=t_k,
                 bubble_pressure_pa=bubble_pressure_pa,
                 pressure_end_pa=p_end_pa,
-                n_steps=self.dl_n_steps.value(),
+                n_steps=n_steps,
                 pressure_unit=pressure_unit,
                 temperature_unit=temperature_unit,
             )
@@ -1557,14 +1800,23 @@ class ConditionsInputWidget(QWidget):
             config = self.get_phase_envelope_config()
             if config is None:
                 return False, "Invalid phase envelope conditions"
+        elif calc_type == CalculationType.TBP:
+            config = self.get_tbp_config()
+            if config is None:
+                return False, "Invalid TBP conditions"
         elif calc_type == CalculationType.CCE:
             config = self.get_cce_config()
             if config is None:
                 return False, "Invalid CCE conditions"
         elif calc_type == CalculationType.DL:
-            config = self.get_dl_config()
-            if config is None:
+            try:
+                self._get_dl_schedule_inputs()
+            except Exception:
                 return False, "Invalid DL conditions"
+            if self.get_dl_bubble_pressure_pa() is not None:
+                config = self.get_dl_config()
+                if config is None:
+                    return False, "Invalid DL conditions"
         elif calc_type == CalculationType.CVD:
             config = self.get_cvd_config()
             if config is None:

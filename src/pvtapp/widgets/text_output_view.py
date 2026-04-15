@@ -119,36 +119,38 @@ class TextOutputWidget(QWidget):
         cfg = result.config
         lines: list[str] = []
 
-        title = cfg.calculation_type.value.replace("_", " ").title()
+        title = "TBP" if cfg.calculation_type.value == "tbp" else cfg.calculation_type.value.replace("_", " ").title()
         lines.append(title)
         lines.append(_fmt_dt(result.completed_at or result.started_at))
         lines.append("")
 
         lines.append(f"Run: {result.run_name or result.run_id}")
         lines.append(f"Status: {result.status.value}")
-        lines.append(f"EOS: {format_eos_label(cfg.eos_type)}")
+        if cfg.calculation_type.value != "tbp":
+            lines.append(f"EOS: {format_eos_label(cfg.eos_type)}")
         if result.duration_seconds is not None:
             lines.append(f"Duration: {result.duration_seconds:.3f} s")
         lines.append("")
 
         # Composition echo
-        lines.append("Feed composition (z)")
-        lines.append("------------------")
-        for entry in cfg.composition.components:
-            lines.append(f"{entry.component_id:<8s} {entry.mole_fraction:>12.6f}")
-        if cfg.composition.plus_fraction is not None:
-            plus_fraction = cfg.composition.plus_fraction
-            lines.append(f"{plus_fraction.label:<8s} {plus_fraction.z_plus:>12.6f}")
-        lines.append("")
-        if cfg.composition.plus_fraction is not None:
-            plus_fraction = cfg.composition.plus_fraction
-            lines.append("C7+ characterization")
-            lines.append("-------------------")
-            lines.append(describe_plus_fraction_policy(plus_fraction))
-            lines.append(f"MW+ = {plus_fraction.mw_plus_g_per_mol:.6f} g/mol")
-            if plus_fraction.sg_plus_60f is not None:
-                lines.append(f"SG+ = {plus_fraction.sg_plus_60f:.6f}")
+        if cfg.composition is not None:
+            lines.append("Feed composition (z)")
+            lines.append("------------------")
+            for entry in cfg.composition.components:
+                lines.append(f"{entry.component_id:<8s} {entry.mole_fraction:>12.6f}")
+            if cfg.composition.plus_fraction is not None:
+                plus_fraction = cfg.composition.plus_fraction
+                lines.append(f"{plus_fraction.label:<8s} {plus_fraction.z_plus:>12.6f}")
             lines.append("")
+            if cfg.composition.plus_fraction is not None:
+                plus_fraction = cfg.composition.plus_fraction
+                lines.append("C7+ characterization")
+                lines.append("-------------------")
+                lines.append(describe_plus_fraction_policy(plus_fraction))
+                lines.append(f"MW+ = {plus_fraction.mw_plus_g_per_mol:.6f} g/mol")
+                if plus_fraction.sg_plus_60f is not None:
+                    lines.append(f"SG+ = {plus_fraction.sg_plus_60f:.6f}")
+                lines.append("")
 
         # Calculation-specific
         if result.pt_flash_result is not None and cfg.pt_flash_config is not None:
@@ -266,6 +268,52 @@ class TextOutputWidget(QWidget):
             if len(r.dew_curve) > 60:
                 lines.append(f"... ({len(r.dew_curve) - 60} more)")
             lines.append("")
+
+        elif result.tbp_result is not None:
+            r = result.tbp_result
+            lines.append("TBP assay")
+            lines.append("---------")
+            lines.append(f"Cut start = C{r.cut_start}")
+            lines.append(f"Cut end   = C{r.cut_end}")
+            lines.append(f"z+        = {r.z_plus:.6f}")
+            lines.append(f"MW+       = {r.mw_plus_g_per_mol:.6f} g/mol")
+            lines.append("")
+            lines.append(
+                "Cut         Range        z       Norm z    Cum Mole %      MW      Tb(K)   Cum Mass %"
+            )
+            for cut in r.cuts[:80]:
+                carbon_range = (
+                    f"{cut.carbon_number}"
+                    if cut.carbon_number_end == cut.carbon_number
+                    else f"{cut.carbon_number}-{cut.carbon_number_end}"
+                )
+                lines.append(
+                    f"{cut.name:<8s} "
+                    f"{carbon_range:<10s} "
+                    f"{cut.mole_fraction:>8.5f} "
+                    f"{cut.normalized_mole_fraction:>10.5f} "
+                    f"{cut.cumulative_mole_fraction * 100.0:>11.2f} "
+                    f"{cut.molecular_weight_g_per_mol:>9.3f} "
+                    f"{('-' if cut.boiling_point_k is None else f'{cut.boiling_point_k:.2f}'):>9s} "
+                    f"{cut.cumulative_mass_fraction * 100.0:>11.2f}"
+                )
+            if len(r.cuts) > 80:
+                lines.append(f"... ({len(r.cuts) - 80} more)")
+            lines.append("")
+
+            if r.characterization_context is not None:
+                ctx = r.characterization_context
+                lines.append("Runtime bridge")
+                lines.append("--------------")
+                lines.append("Source = TBP assay")
+                lines.append("Status = Aggregate only")
+                lines.append(f"Label  = {ctx.plus_fraction_label}")
+                lines.append(f"z+     = {ctx.z_plus:.6f}")
+                lines.append(f"MW+    = {ctx.mw_plus_g_per_mol:.6f} g/mol")
+                lines.append(f"SG+    = {'-' if ctx.sg_plus_60f is None else f'{ctx.sg_plus_60f:.6f}'}")
+                for note in ctx.notes:
+                    lines.append(f"Note: {note}")
+                lines.append("")
 
         elif result.cce_result is not None:
             r = result.cce_result

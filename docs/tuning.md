@@ -29,9 +29,18 @@ Requests using these types should fail explicitly with a message that names the 
 
 ## TBP
 
-Dedicated TBP experiment workflows are not implemented in this repo. The empty `src/pvtcore/experiments/tbp.py` stub was removed rather than kept as a phantom feature.
+The repo now has a bounded standalone TBP assay kernel in `src/pvtcore/experiments/tbp.py`.
 
-Phase-1 support does exist in the schema-driven `pvtcore` fluid-definition path: `fluid.plus_fraction.tbp_data.cuts` can be consumed by `load_fluid_definition(...)` plus `characterize_from_schema(...)` to derive aggregate plus-fraction inputs for the existing characterization workflow. That support does not extend `pvtcore.tuning`, `pvtcore.experiments`, or `pvtapp` with a standalone TBP calculation mode.
+Bounded support now exists in two forms:
+
+- `fluid.plus_fraction.tbp_data.cuts` can be consumed by `load_fluid_definition(...)` plus `characterize_from_schema(...)` to derive aggregate plus-fraction inputs for the existing characterization workflow.
+- Pedersen plus-fraction splitting now also supports `solve_AB_from: fit_to_tbp`, allowing TBP cuts to constrain the actual heavy-end split used by the runtime characterization path.
+- `pvtapp` exposes a standalone desktop-plus-runtime TBP run mode through `CalculationType.TBP`, `RunConfig(calculation_type="tbp", tbp_config={...})`, and `run_calculation(...)`, with saved artifact and result rendering support.
+- `pvtapp` plus-fraction runtime configs now also admit optional `tbp_cuts` plus Pedersen `fit_to_tbp` selection for non-standalone thermo runs.
+- TBP run artifacts now preserve a derived aggregate heavy-end bridge context so the runtime-visible `z+` / `MW+` intent remains auditable outside the standalone assay screen.
+- The current TBP slice now also admits interval/gapped cuts and optional/estimated boiling-point endpoints in the standalone assay workflow.
+
+This does **not** yet mean full-spectrum TBP characterization maturity. The new runtime-backed piece is a bounded Pedersen `fit_to_tbp` path; the standalone TBP desktop support is still a cut-table assay workflow, the standalone bridge remains aggregate-only, and broader downstream TBP-specific characterization / validation work still remains.
 
 ## Example
 

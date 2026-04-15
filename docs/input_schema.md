@@ -53,14 +53,19 @@ fluid:
     sg_plus_60F: 0.815                # specific gravity at 60°F/60°F convention
     tbp_data:                         # OPTIONAL (if TBP cut data exists)
       cuts:
-        - name: "C7"
+        - name: "C7-C9"
           z: 0.010
-          mw: 96.0
+          mw: 103.0
           sg: 0.72
-        - name: "C8"
+          tb_k: 385.0
+        - name: "C12"
           z: 0.009
-          mw: 110.0
+          mw: 170.0
           sg: 0.74
+        - name: "C15-C18"
+          z: 0.0202
+          mw: 235.0
+          sg: 0.81
     splitting:                        # controls how C7+ is expanded
       method: "pedersen"              # pedersen | katz | lohrenz
       target_end: "C20+"              # e.g., "C20+", "C30+", "C45+"

@@ -11,6 +11,7 @@ from pvtapp.job_runner import (
     ProgressCallback,
     build_rerun_config,
     load_run_config,
+    load_run_result,
     rerun_saved_run,
     run_calculation,
     validate_runtime_config,
@@ -33,6 +34,22 @@ def _pt_flash_config(*, eos_type: str = "peng_robinson") -> RunConfig:
             "pt_flash_config": {
                 "pressure_pa": 5.0e6,
                 "temperature_k": 350.0,
+            },
+        }
+    )
+
+
+def _tbp_config() -> RunConfig:
+    return RunConfig.model_validate(
+        {
+            "run_name": "TBP Runtime Contract",
+            "calculation_type": "tbp",
+            "tbp_config": {
+                "cuts": [
+                    {"name": "C7", "z": 0.020, "mw": 96.0, "sg": 0.74},
+                    {"name": "C8", "z": 0.015, "mw": 110.0, "sg": 0.77},
+                    {"name": "C9", "z": 0.015, "mw": 124.0, "sg": 0.80},
+                ]
             },
         }
     )
@@ -73,6 +90,44 @@ def _bubble_point_plus_fraction_config() -> RunConfig:
             "bubble_point_config": {
                 "temperature_k": 360.0,
                 "pressure_initial_pa": 1.0e5,
+            },
+        }
+    )
+
+
+def _pt_flash_plus_fraction_tbp_fit_config() -> RunConfig:
+    return RunConfig.model_validate(
+        {
+            "run_name": "PT Flash - TBP-backed Pedersen fit",
+            "composition": {
+                "components": [
+                    {"component_id": "C1", "mole_fraction": 0.35},
+                    {"component_id": "C2", "mole_fraction": 0.20},
+                    {"component_id": "C3", "mole_fraction": 0.15},
+                ],
+                "plus_fraction": {
+                    "label": "C7+",
+                    "cut_start": 7,
+                    "z_plus": 0.30,
+                    "mw_plus_g_per_mol": 108.13333333333334,
+                    "sg_plus_60f": 0.82,
+                    "characterization_preset": "manual",
+                    "max_carbon_number": 12,
+                    "split_method": "pedersen",
+                    "split_mw_model": "paraffin",
+                    "pedersen_solve_ab_from": "fit_to_tbp",
+                    "tbp_cuts": [
+                        {"name": "C7", "z": 0.120, "mw": 96.0},
+                        {"name": "C8", "z": 0.100, "mw": 110.0},
+                        {"name": "C9", "z": 0.080, "mw": 124.0, "tb_k": 425.0},
+                    ],
+                },
+            },
+            "calculation_type": "pt_flash",
+            "eos_type": "peng_robinson",
+            "pt_flash_config": {
+                "pressure_pa": 5.0e6,
+                "temperature_k": 350.0,
             },
         }
     )
@@ -272,6 +327,73 @@ def test_validate_runtime_config_accepts_plus_fraction_characterization_inputs()
     validate_runtime_config(config)
 
 
+def test_validate_runtime_config_accepts_pedersen_fit_to_tbp_inputs() -> None:
+    config = _pt_flash_plus_fraction_tbp_fit_config()
+
+    validate_runtime_config(config)
+
+
+def test_validate_runtime_config_rejects_plus_fraction_tbp_mw_mismatch() -> None:
+    config = _pt_flash_plus_fraction_tbp_fit_config()
+    config = config.model_copy(
+        update={
+            "composition": config.composition.model_copy(
+                update={
+                    "plus_fraction": config.composition.plus_fraction.model_copy(
+                        update={"mw_plus_g_per_mol": 120.0}
+                    )
+                }
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match="mw_plus_g_per_mol does not match"):
+        validate_runtime_config(config)
+
+
+def test_validate_runtime_config_accepts_standalone_tbp_runtime() -> None:
+    config = _tbp_config()
+
+    validate_runtime_config(config)
+
+
+def test_run_config_rejects_missing_composition_for_non_tbp_calculations() -> None:
+    with pytest.raises(ValueError, match="composition is required for pt_flash calculation"):
+        RunConfig.model_validate(
+            {
+                "run_name": "PT Flash - no composition",
+                "calculation_type": "pt_flash",
+                "pt_flash_config": {
+                    "pressure_pa": 5.0e6,
+                    "temperature_k": 350.0,
+                },
+            }
+        )
+
+
+def test_run_config_rejects_tbp_with_legacy_composition_payload() -> None:
+    with pytest.raises(
+        ValueError,
+        match="TBP calculation uses tbp_config only and must not also define composition",
+    ):
+        RunConfig.model_validate(
+            {
+                "run_name": "TBP - mixed payload",
+                "calculation_type": "tbp",
+                "composition": {
+                    "components": [
+                        {"component_id": "C1", "mole_fraction": 1.0},
+                    ]
+                },
+                "tbp_config": {
+                    "cuts": [
+                        {"name": "C7", "z": 0.020, "mw": 96.0},
+                    ]
+                },
+            }
+        )
+
+
 def test_validate_runtime_config_accepts_inline_pseudo_components() -> None:
     config = RunConfig.model_validate(
         {
@@ -370,6 +492,19 @@ def test_run_calculation_executes_pt_flash_with_plus_fraction_characterization()
     )
 
 
+def test_run_calculation_executes_pt_flash_with_pedersen_fit_to_tbp_characterization() -> None:
+    config = _pt_flash_plus_fraction_tbp_fit_config()
+
+    result = run_calculation(config, write_artifacts=False)
+
+    assert result.pt_flash_result is not None
+    assert result.config.composition.plus_fraction is not None
+    assert result.config.composition.plus_fraction.characterization_preset.value == "manual"
+    assert result.config.composition.plus_fraction.pedersen_solve_ab_from == "fit_to_tbp"
+    assert result.config.composition.plus_fraction.tbp_cuts is not None
+    assert len(result.config.composition.plus_fraction.tbp_cuts) == 3
+
+
 @pytest.mark.parametrize("split_method", ["katz", "lohrenz"])
 def test_run_calculation_executes_pt_flash_with_supported_manual_split_methods(
     split_method: str,
@@ -414,6 +549,52 @@ def test_run_calculation_executes_pt_flash_with_supported_manual_split_methods(
     assert result.config.composition.plus_fraction is not None
     assert result.config.composition.plus_fraction.characterization_preset.value == "manual"
     assert result.config.composition.plus_fraction.split_method == split_method
+
+
+def test_run_calculation_executes_standalone_tbp_runtime() -> None:
+    config = _tbp_config()
+
+    result = run_calculation(config=config, write_artifacts=False)
+
+    assert result.status == RunStatus.COMPLETED
+    assert result.error_message is None
+    assert result.tbp_result is not None
+    assert result.config.composition is None
+    assert result.tbp_result.cut_start == 7
+    assert result.tbp_result.cut_end == 9
+    assert result.tbp_result.z_plus == pytest.approx(0.05)
+    assert result.tbp_result.mw_plus_g_per_mol == pytest.approx(108.6)
+    assert [cut.name for cut in result.tbp_result.cuts] == ["C7", "C8", "C9"]
+    assert all(cut.boiling_point_k is not None for cut in result.tbp_result.cuts)
+    assert result.tbp_result.characterization_context is not None
+    assert result.tbp_result.characterization_context.plus_fraction_label == "C7+"
+    assert result.tbp_result.characterization_context.bridge_status == "aggregate_only"
+    assert result.tbp_result.characterization_context.notes
+    assert result.pt_flash_result is None
+    assert result.cce_result is None
+
+
+def test_run_calculation_persists_tbp_run_artifacts(tmp_path: Path) -> None:
+    config = _tbp_config().model_copy(update={"run_id": "tbpart01"})
+
+    result = run_calculation(config=config, output_dir=tmp_path, write_artifacts=True)
+
+    assert result.status == RunStatus.COMPLETED
+    run_dirs = sorted(tmp_path.iterdir())
+    assert len(run_dirs) == 1
+    run_dir = run_dirs[0]
+
+    loaded_config = load_run_config(run_dir)
+    loaded_result = load_run_result(run_dir)
+
+    assert loaded_config is not None
+    assert loaded_result is not None
+    assert loaded_config.model_dump(mode="json") == result.config.model_dump(mode="json")
+    assert loaded_result.tbp_result is not None
+    assert loaded_result.tbp_result.z_plus == pytest.approx(0.05)
+    assert loaded_result.tbp_result.cuts[0].boiling_point_k is not None
+    assert loaded_result.tbp_result.characterization_context is not None
+    assert loaded_result.tbp_result.characterization_context.plus_fraction_label == "C7+"
 
 
 def test_run_calculation_executes_bubble_point_with_plus_fraction_characterization() -> None:

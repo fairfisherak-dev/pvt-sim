@@ -43,6 +43,7 @@ from pvtapp.schemas import (
     BubblePointResult,
     DewPointResult,
     PhaseEnvelopeResult,
+    TBPExperimentResult,
     CCEResult,
     DLResult,
     CVDResult,
@@ -75,15 +76,17 @@ def _display_component_label(
     """Map runtime component tokens to compact user-facing labels."""
     normalized = component_id.strip()
     if current_result is not None:
-        plus_fraction = current_result.config.composition.plus_fraction
-        if plus_fraction is not None and normalized == plus_fraction.label.strip():
-            return plus_fraction.label.strip()
-        for spec in current_result.config.composition.inline_components:
-            if spec.component_id.strip() == normalized:
-                display_label = spec.name.strip() or spec.formula.strip()
-                if display_label.upper() in {"PSEUDO+", "PSEUDO_PLUS"}:
-                    return INLINE_PSEUDO_FALLBACK_LABEL
-                return display_label or INLINE_PSEUDO_FALLBACK_LABEL
+        composition = current_result.config.composition
+        if composition is not None:
+            plus_fraction = composition.plus_fraction
+            if plus_fraction is not None and normalized == plus_fraction.label.strip():
+                return plus_fraction.label.strip()
+            for spec in composition.inline_components:
+                if spec.component_id.strip() == normalized:
+                    display_label = spec.name.strip() or spec.formula.strip()
+                    if display_label.upper() in {"PSEUDO+", "PSEUDO_PLUS"}:
+                        return INLINE_PSEUDO_FALLBACK_LABEL
+                    return display_label or INLINE_PSEUDO_FALLBACK_LABEL
     if normalized == INLINE_PSEUDO_TOKEN:
         return INLINE_PSEUDO_FALLBACK_LABEL
     return normalized
@@ -112,6 +115,7 @@ def _format_calculation_type_label(calculation_type) -> str:
         "bubble_point": "Bubble Point",
         "dew_point": "Dew Point",
         "phase_envelope": "Phase Envelope",
+        "tbp": "TBP",
         "cce": "CCE",
         "differential_liberation": "DL",
         "cvd": "CVD",
@@ -569,6 +573,8 @@ class ResultsTableWidget(QWidget):
             self._display_dew_point(result.dew_point_result)
         elif result.phase_envelope_result:
             self._display_phase_envelope(result.phase_envelope_result)
+        elif result.tbp_result:
+            self._display_tbp(result.tbp_result)
         elif result.cce_result:
             self._display_cce(result.cce_result)
         elif result.dl_result:
@@ -767,13 +773,28 @@ class ResultsTableWidget(QWidget):
         return config.pressure_unit, config.temperature_unit
 
     def _plus_fraction_summary_rows(self) -> list[tuple[str, str]]:
-        if self._current_result is None or self._current_result.config.composition.plus_fraction is None:
+        if (
+            self._current_result is None
+            or self._current_result.config.composition is None
+            or self._current_result.config.composition.plus_fraction is None
+        ):
             return []
         plus_fraction = self._current_result.config.composition.plus_fraction
         return [
             ("C7+ Policy", describe_plus_fraction_policy(plus_fraction)),
             ("C7+ MW+", f"{plus_fraction.mw_plus_g_per_mol:.3f} g/mol"),
             ("C7+ SG+", "-" if plus_fraction.sg_plus_60f is None else f"{plus_fraction.sg_plus_60f:.3f}"),
+        ]
+
+    def _tbp_characterization_summary_rows(self, result: TBPExperimentResult) -> list[tuple[str, str]]:
+        context = result.characterization_context
+        if context is None:
+            return []
+        return [
+            ("Bridge Source", "TBP assay"),
+            ("Bridge Status", "Aggregate only"),
+            ("Bridge Label", context.plus_fraction_label),
+            ("Bridge SG+", "-" if context.sg_plus_60f is None else f"{context.sg_plus_60f:.3f}"),
         ]
 
     @staticmethod
@@ -944,6 +965,67 @@ class ResultsTableWidget(QWidget):
         self.composition_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch
         )
+
+    def _display_tbp(self, result: TBPExperimentResult) -> None:
+        """Display bounded standalone TBP assay results."""
+        self.composition_section.setTitle("Cuts")
+        self.details_section.setTitle("Curves")
+
+        summary_data = [
+            ("Cut Start", str(result.cut_start)),
+            ("Cut End", str(result.cut_end)),
+            ("Cuts", str(len(result.cuts))),
+            ("z+", f"{result.z_plus:.6f}"),
+            ("MW+", f"{result.mw_plus_g_per_mol:.3f} g/mol"),
+            (
+                "Tb Curve",
+                "Available" if any(cut.boiling_point_k is not None for cut in result.cuts) else "Not available",
+            ),
+        ]
+        summary_data.extend(self._tbp_characterization_summary_rows(result))
+        self.summary_table.setRowCount(len(summary_data))
+        for row, (prop, value) in enumerate(summary_data):
+            self.summary_table.setItem(row, 0, QTableWidgetItem(prop))
+            self.summary_table.setItem(row, 1, QTableWidgetItem(value))
+
+        self.composition_table.setColumnCount(7)
+        self.composition_table.setHorizontalHeaderLabels(
+            ["Cut", "Carbon Range", "z", "Norm. z", "MW (g/mol)", "SG", "Tb (K)"]
+        )
+        self.composition_table.setRowCount(len(result.cuts))
+        for row, cut in enumerate(result.cuts):
+            carbon_range = (
+                str(cut.carbon_number)
+                if cut.carbon_number_end == cut.carbon_number
+                else f"{cut.carbon_number}-{cut.carbon_number_end}"
+            )
+            self.composition_table.setItem(row, 0, QTableWidgetItem(cut.name))
+            self.composition_table.setItem(row, 1, QTableWidgetItem(carbon_range))
+            self.composition_table.setItem(row, 2, QTableWidgetItem(f"{cut.mole_fraction:.6f}"))
+            self.composition_table.setItem(row, 3, QTableWidgetItem(f"{cut.normalized_mole_fraction:.6f}"))
+            self.composition_table.setItem(row, 4, QTableWidgetItem(f"{cut.molecular_weight_g_per_mol:.3f}"))
+            self.composition_table.setItem(
+                row,
+                5,
+                QTableWidgetItem("-" if cut.specific_gravity is None else f"{cut.specific_gravity:.4f}"),
+            )
+            self.composition_table.setItem(
+                row,
+                6,
+                QTableWidgetItem("-" if cut.boiling_point_k is None else f"{cut.boiling_point_k:.2f}"),
+            )
+
+        self.details_table.setColumnCount(5)
+        self.details_table.setHorizontalHeaderLabels(
+            ["Cut", "Cum. Mole %", "Mass Frac.", "Cum. Mass %", "Cum. Mole Frac."]
+        )
+        self.details_table.setRowCount(len(result.cuts))
+        for row, cut in enumerate(result.cuts):
+            self.details_table.setItem(row, 0, QTableWidgetItem(cut.name))
+            self.details_table.setItem(row, 1, QTableWidgetItem(f"{cut.cumulative_mole_fraction * 100.0:.2f}"))
+            self.details_table.setItem(row, 2, QTableWidgetItem(f"{cut.normalized_mass_fraction:.6f}"))
+            self.details_table.setItem(row, 3, QTableWidgetItem(f"{cut.cumulative_mass_fraction * 100.0:.2f}"))
+            self.details_table.setItem(row, 4, QTableWidgetItem(f"{cut.cumulative_mole_fraction:.6f}"))
 
     def _display_saturation_result(
         self,
@@ -1332,7 +1414,9 @@ class UnitConverterWidget(QWidget):
 
     def _setup_ui(self) -> None:
         self._layout = QHBoxLayout(self)
-        self._layout.setContentsMargins(0, 0, 0, 0)
+        inset_x = scale_metric(6, DEFAULT_UI_SCALE, reference_scale=DEFAULT_UI_SCALE)
+        inset_y = scale_metric(3, DEFAULT_UI_SCALE, reference_scale=DEFAULT_UI_SCALE)
+        self._layout.setContentsMargins(inset_x, inset_y, inset_x, inset_y)
         self._layout.setSpacing(scale_metric(8, DEFAULT_UI_SCALE, reference_scale=DEFAULT_UI_SCALE))
 
         self.heading_label = QLabel("Convert")
@@ -1372,6 +1456,9 @@ class UnitConverterWidget(QWidget):
 
     def apply_ui_scale(self, ui_scale: float) -> None:
         self._ui_scale = ui_scale
+        inset_x = scale_metric(6, ui_scale, reference_scale=DEFAULT_UI_SCALE)
+        inset_y = scale_metric(3, ui_scale, reference_scale=DEFAULT_UI_SCALE)
+        self._layout.setContentsMargins(inset_x, inset_y, inset_x, inset_y)
         self._layout.setSpacing(scale_metric(8, ui_scale, reference_scale=DEFAULT_UI_SCALE))
         self._apply_widget_widths(ui_scale)
 
@@ -1576,7 +1663,7 @@ class ResultsPlotWidget(QWidget):
             if result.phase_envelope_result:
                 self._plot_phase_envelope(result.phase_envelope_result)
             else:
-                calc_label = result.config.calculation_type.value.replace("_", " ").title()
+                calc_label = _format_calculation_type_label(result.config.calculation_type)
                 self._plot_placeholder(
                     "Phase envelope view is only populated by phase-envelope runs.\n"
                     f"Latest result type: {calc_label}."
@@ -1589,6 +1676,8 @@ class ResultsPlotWidget(QWidget):
             self._plot_dew_point(result.dew_point_result)
         elif result.phase_envelope_result:
             self._plot_phase_envelope(result.phase_envelope_result)
+        elif result.tbp_result:
+            self._plot_tbp(result.tbp_result)
         elif result.cce_result:
             self._plot_cce(result.cce_result)
         elif result.dl_result:
@@ -1732,6 +1821,51 @@ class ResultsPlotWidget(QWidget):
         ax.set_ylabel('Pressure (bar)')
         ax.set_title('Phase Envelope')
         ax.legend()
+        self._apply_axes_theme(ax)
+
+        self.figure.tight_layout()
+
+    def _plot_tbp(self, result: TBPExperimentResult) -> None:
+        """Plot cumulative TBP assay curves across the entered cut sequence."""
+        ax = self.figure.add_subplot(111)
+        ax.set_facecolor(PLOT_CANVAS_COLOR)
+
+        labels = [cut.name for cut in result.cuts]
+        x = list(range(len(result.cuts)))
+        cumulative_mole_percent = [cut.cumulative_mole_fraction * 100.0 for cut in result.cuts]
+        cumulative_mass_percent = [cut.cumulative_mass_fraction * 100.0 for cut in result.cuts]
+
+        ax.plot(x, cumulative_mole_percent, color="#2563eb", marker="o", linewidth=2, label="Cum. Mole %")
+        ax.plot(x, cumulative_mass_percent, color="#dc2626", marker="s", linewidth=2, label="Cum. Mass %")
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, rotation=35, ha="right", rotation_mode="anchor")
+        ax.set_xlabel("TBP Cut")
+        ax.set_ylabel("Cumulative Yield (%)")
+        ax.set_title("TBP Assay Summary")
+        ax.set_ylim(0.0, 100.0)
+        boiling_points_k = [cut.boiling_point_k for cut in result.cuts]
+        if any(value is not None for value in boiling_points_k):
+            tb_ax = ax.twinx()
+            tb_ax.set_facecolor(PLOT_CANVAS_COLOR)
+            tb_x = [idx for idx, value in enumerate(boiling_points_k) if value is not None]
+            tb_y = [value for value in boiling_points_k if value is not None]
+            tb_ax.plot(
+                tb_x,
+                tb_y,
+                color="#f59e0b",
+                marker="^",
+                linewidth=1.8,
+                linestyle="--",
+                label="Tb (K)",
+            )
+            tb_ax.set_ylabel("Boiling Point (K)")
+            tb_ax.tick_params(axis="y", colors=PLOT_TEXT_COLOR)
+            tb_ax.yaxis.label.set_color(PLOT_TEXT_COLOR)
+            handles, labels_text = ax.get_legend_handles_labels()
+            tb_handles, tb_labels = tb_ax.get_legend_handles_labels()
+            ax.legend(handles + tb_handles, labels_text + tb_labels)
+        else:
+            ax.legend()
         self._apply_axes_theme(ax)
 
         self.figure.tight_layout()
