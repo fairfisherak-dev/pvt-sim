@@ -545,3 +545,105 @@ class TestPropertiesIntegration:
 
         assert ift_no_shift.ift > 0
         assert ift_shifted.ift > 0
+
+
+# =============================================================================
+# Low-level density helpers (merged from test_density.py)
+# =============================================================================
+
+class TestDensityHelpers:
+    """Tests for pvtcore.properties.density low-level helpers."""
+
+    def test_phase_molecular_weight_matches_weighted_average(self):
+        from pvtcore.properties.density import phase_molecular_weight_g_per_mol
+        comps = load_components()
+        system = [comps["C1"], comps["C10"]]
+        x = np.array([0.25, 0.75])
+        mw = phase_molecular_weight_g_per_mol(x, system)
+        expected = 0.25 * system[0].MW + 0.75 * system[1].MW
+        assert mw == pytest.approx(expected, rel=0.0, abs=1e-12)
+
+    def test_mass_density_matches_eos_molar_density_times_mw(self):
+        from pvtcore.properties.density import mass_density_kg_per_m3
+        comps = load_components()
+        system = [comps["C1"]]
+        eos = PengRobinsonEOS(system)
+        P, T, z = 5.0e6, 300.0, np.array([1.0])
+        rho_mol = float(eos.density(P, T, z, phase="vapor"))
+        mw_kg_mol = system[0].MW / 1000.0
+        expected = rho_mol * mw_kg_mol
+        rho = mass_density_kg_per_m3(P, T, z, eos, system, phase="vapor")
+        assert rho == pytest.approx(expected, rel=1e-12, abs=0.0)
+
+    def test_densities_after_flash_two_phase_smoke(self):
+        from pvtcore.properties.density import densities_after_flash
+        from pvtcore.flash.pt_flash import pt_flash
+        comps = load_components()
+        system = [comps["C1"], comps["C10"]]
+        eos = PengRobinsonEOS(system)
+        flash = pt_flash(3.0e6, 300.0, np.array([0.6, 0.4]), system, eos)
+        if flash.phase != "two-phase":
+            pytest.skip("Chosen conditions did not yield two-phase flash.")
+        res = densities_after_flash(flash, eos, system)
+        assert res.liquid is not None and res.vapor is not None
+        assert np.isfinite(res.liquid.mass_density_kg_per_m3)
+        assert np.isfinite(res.vapor.mass_density_kg_per_m3)
+        assert res.liquid.mass_density_kg_per_m3 > res.vapor.mass_density_kg_per_m3
+
+
+# =============================================================================
+# Parachor IFT low-level (merged from test_ift_parachor.py)
+# =============================================================================
+
+class TestParachorIFTLowLevel:
+    """Tests for pvtcore.properties.ift_parachor low-level functions."""
+
+    def test_zero_sigma_when_no_contrast(self):
+        from pvtcore.properties.ift_parachor import interfacial_tension_parachor
+        x = np.array([0.4, 0.6])
+        res = interfacial_tension_parachor(
+            x, x.copy(),
+            rho_liquid_kg_per_m3=600.0, rho_vapor_kg_per_m3=600.0,
+            mw_components_g_per_mol=np.array([16.0, 142.0]),
+            parachor=np.array([100.0, 500.0]),
+        )
+        assert res.sigma_N_per_m == pytest.approx(0.0, abs=0.0)
+
+    def test_quartic_parachor_scaling(self):
+        from pvtcore.properties.ift_parachor import interfacial_tension_parachor
+        x, y = np.array([0.2, 0.8]), np.array([0.8, 0.2])
+        mw = np.array([16.0, 142.0])
+        P_base = np.array([100.0, 400.0])
+        r1 = interfacial_tension_parachor(
+            x, y,
+            rho_liquid_kg_per_m3=700.0, rho_vapor_kg_per_m3=50.0,
+            mw_components_g_per_mol=mw, parachor=P_base,
+        )
+        r2 = interfacial_tension_parachor(
+            x, y,
+            rho_liquid_kg_per_m3=700.0, rho_vapor_kg_per_m3=50.0,
+            mw_components_g_per_mol=mw, parachor=2.0 * P_base,
+        )
+        assert r2.sigma_N_per_m == pytest.approx(16.0 * r1.sigma_N_per_m, rel=1e-12, abs=0.0)
+
+    def test_finite_non_negative_typical_inputs(self):
+        from pvtcore.properties.ift_parachor import interfacial_tension_parachor
+        res = interfacial_tension_parachor(
+            np.array([0.05, 0.95]), np.array([0.95, 0.05]),
+            rho_liquid_kg_per_m3=650.0, rho_vapor_kg_per_m3=20.0,
+            mw_components_g_per_mol=np.array([16.0, 142.0]),
+            parachor=np.array([90.0, 420.0]),
+        )
+        assert np.isfinite(res.sigma_N_per_m) and res.sigma_N_per_m >= 0.0
+
+    def test_after_flash_smoke(self):
+        from pvtcore.properties.ift_parachor import interfacial_tension_parachor_after_flash
+        from pvtcore.flash.pt_flash import pt_flash
+        comps = load_components()
+        system = [comps["C1"], comps["C10"]]
+        eos = PengRobinsonEOS(system)
+        flash = pt_flash(3.0e6, 300.0, np.array([0.6, 0.4]), system, eos)
+        if flash.phase != "two-phase":
+            pytest.skip("Chosen conditions did not yield two-phase flash.")
+        res = interfacial_tension_parachor_after_flash(flash, eos, system)
+        assert np.isfinite(res.sigma_N_per_m) and res.sigma_N_per_m >= 0.0
