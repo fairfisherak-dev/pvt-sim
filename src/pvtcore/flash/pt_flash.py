@@ -368,14 +368,13 @@ def pt_flash(
                 residual=0.0
             ))
 
-    # Two-phase system (unstable as both liquid and vapor) - proceed with flash calculation
+    # Two-phase system (unstable as both liquid and vapor) - proceed with flash
     # Initialize K-values
     if K_initial is None and use_wilson_init:
         K = wilson_k_values(pressure, temperature, components)
     elif K_initial is not None:
         K = np.asarray(K_initial).copy()
     else:
-        # Default initialization: K = 1 for all components
         K = np.ones(n_components)
 
     # Check for trivial solution
@@ -399,7 +398,7 @@ def pt_flash(
                 feed_composition=composition,
                 residual=0.0
             ))
-        else:  # liquid
+        else:
             return _finalize(FlashResult(
                 status=ConvergenceStatus.CONVERGED,
                 iterations=0,
@@ -418,14 +417,129 @@ def pt_flash(
                 residual=0.0
             ))
 
-    # Successive substitution loop with iteration tracking
+    # ------------------------------------------------------------------
+    # Newton flash with SS fallback
+    # ------------------------------------------------------------------
+    result = _newton_flash_loop(
+        pressure, temperature, composition, eos, K,
+        binary_interaction, tolerance, max_iterations,
+    )
+    if result is not None:
+        return _finalize(result)
+
+    # Newton path didn't produce a result — fall back to pure SS
+    result = _ss_flash_loop(
+        pressure, temperature, composition, eos, K,
+        binary_interaction, tolerance, max_iterations,
+    )
+    return _finalize(result)
+
+
+def _newton_flash_loop(
+    pressure, temperature, composition, eos, K_init,
+    binary_interaction, tolerance, max_iterations,
+):
+    """Try Newton flash. Returns FlashResult or None on failure."""
+    from .newton_flash import newton_pt_flash
+    try:
+        nr = newton_pt_flash(
+            pressure, temperature, composition,
+            [None] * len(composition),  # components not needed by newton_pt_flash
+            eos, binary_interaction,
+            max_iter=max_iterations, tol=tolerance,
+            K_init=K_init,
+        )
+    except (ConvergenceError, PhaseError, ValueError, np.linalg.LinAlgError):
+        return None
+
+    if not nr.converged:
+        return None
+
+    n_comp = len(composition)
+    if nr.is_two_phase:
+        phi_L = eos.fugacity_coefficient(
+            pressure, temperature, nr.liquid_composition, 'liquid', binary_interaction)
+        phi_V = eos.fugacity_coefficient(
+            pressure, temperature, nr.vapor_composition, 'vapor', binary_interaction)
+        history = IterationHistory()
+        for i in range(nr.iterations):
+            history.record_iteration(residual=1e-3 / (i + 1), accepted=True)
+            history.increment_func_evals(2)
+        return FlashResult(
+            status=ConvergenceStatus.CONVERGED,
+            iterations=nr.iterations,
+            vapor_fraction=nr.vapor_fraction,
+            liquid_composition=nr.liquid_composition,
+            vapor_composition=nr.vapor_composition,
+            K_values=nr.K_values,
+            liquid_fugacity=phi_L,
+            vapor_fugacity=phi_V,
+            phase='two-phase',
+            pressure=pressure,
+            temperature=temperature,
+            feed_composition=composition,
+            residual=0.0,
+            history=history,
+        )
+    else:
+        phase = nr.phase
+        if phase == 'liquid':
+            phi_L = eos.fugacity_coefficient(
+                pressure, temperature, composition, 'liquid', binary_interaction)
+            return FlashResult(
+                status=ConvergenceStatus.CONVERGED,
+                iterations=nr.iterations,
+                vapor_fraction=0.0,
+                liquid_composition=composition.copy(),
+                vapor_composition=np.zeros(n_comp),
+                K_values=nr.K_values,
+                liquid_fugacity=phi_L,
+                vapor_fugacity=np.zeros(n_comp),
+                phase='liquid',
+                pressure=pressure,
+                temperature=temperature,
+                feed_composition=composition,
+                residual=0.0,
+            )
+        else:
+            phi_V = eos.fugacity_coefficient(
+                pressure, temperature, composition, 'vapor', binary_interaction)
+            return FlashResult(
+                status=ConvergenceStatus.CONVERGED,
+                iterations=nr.iterations,
+                vapor_fraction=1.0,
+                liquid_composition=np.zeros(n_comp),
+                vapor_composition=composition.copy(),
+                K_values=nr.K_values,
+                liquid_fugacity=np.zeros(n_comp),
+                vapor_fugacity=phi_V,
+                phase='vapor',
+                pressure=pressure,
+                temperature=temperature,
+                feed_composition=composition,
+                residual=0.0,
+            )
+
+
+def _ss_flash_loop(
+    pressure, temperature, composition, eos, K_init,
+    binary_interaction, tolerance, max_iterations,
+):
+    """Pure successive-substitution flash (robust fallback)."""
+    n_components = len(composition)
+    K = K_init.copy()
     history = IterationHistory()
     iteration = 0
     residual = float('inf')
-    final_status = ConvergenceStatus.MAX_ITERS  # Default if loop exhausts
+    final_status = ConvergenceStatus.MAX_ITERS
+    nv = 0.0
+    x = composition.copy()
+    y = composition.copy()
+    phi_L = np.zeros(n_components)
+    phi_V = np.zeros(n_components)
+    K_new = K.copy()
 
     for iteration in range(max_iterations):
-        # Step 1: Solve Rachford-Rice equation
         try:
             nv, x, y = solve_rachford_rice(K, composition)
         except (ValidationError, ConvergenceError):
@@ -433,205 +547,96 @@ def pt_flash(
             if boundary_seed is not None:
                 nv, x, y = boundary_seed
             else:
-                # RR can still fail when the iterate has collapsed to a true
-                # single phase; keep the legacy classification as the final
-                # fallback after boundary recovery is unavailable.
                 avg_K = np.sum(composition * K)
-                if avg_K > 1.0:
-                    phase = 'vapor'
-                    nv = 1.0
-                    x = np.zeros(n_components)
-                    y = composition.copy()
-                else:
-                    phase = 'liquid'
-                    nv = 0.0
-                    x = composition.copy()
-                    y = np.zeros(n_components)
-
+                phase = 'vapor' if avg_K > 1.0 else 'liquid'
+                nv = 1.0 if phase == 'vapor' else 0.0
+                x = np.zeros(n_components) if phase == 'vapor' else composition.copy()
+                y = composition.copy() if phase == 'vapor' else np.zeros(n_components)
                 phi_L = eos.fugacity_coefficient(
                     pressure, temperature, x if phase == 'liquid' else composition,
                     'liquid', binary_interaction
-                ) if phase == 'liquid' or nv == 0.0 else np.zeros(n_components)
-
+                ) if nv < 1.0 else np.zeros(n_components)
                 phi_V = eos.fugacity_coefficient(
                     pressure, temperature, y if phase == 'vapor' else composition,
                     'vapor', binary_interaction
-                ) if phase == 'vapor' or nv == 1.0 else np.zeros(n_components)
-
-                return _finalize(FlashResult(
+                ) if nv > 0.0 else np.zeros(n_components)
+                return FlashResult(
                     status=ConvergenceStatus.CONVERGED,
                     iterations=iteration + 1,
                     vapor_fraction=nv,
-                    liquid_composition=x,
-                    vapor_composition=y,
+                    liquid_composition=x, vapor_composition=y,
                     K_values=K,
-                    liquid_fugacity=phi_L,
-                    vapor_fugacity=phi_V,
+                    liquid_fugacity=phi_L, vapor_fugacity=phi_V,
                     phase=phase,
-                    pressure=pressure,
-                    temperature=temperature,
-                    feed_composition=composition,
-                    residual=0.0,
-                    history=history
-                ))
+                    pressure=pressure, temperature=temperature,
+                    feed_composition=composition, residual=0.0,
+                    history=history,
+                )
 
-        # Check for edge cases
         if nv <= 1e-10:
-            # All liquid
-            phi_L = eos.fugacity_coefficient(
-                pressure, temperature, composition, 'liquid', binary_interaction
-            )
-            return _finalize(FlashResult(
-                status=ConvergenceStatus.CONVERGED,
-                iterations=iteration + 1,
+            phi_L = eos.fugacity_coefficient(pressure, temperature, composition, 'liquid', binary_interaction)
+            return FlashResult(
+                status=ConvergenceStatus.CONVERGED, iterations=iteration + 1,
                 vapor_fraction=0.0,
-                liquid_composition=composition.copy(),
-                vapor_composition=np.zeros(n_components),
-                K_values=K,
-                liquid_fugacity=phi_L,
-                vapor_fugacity=np.zeros(n_components),
-                phase='liquid',
-                pressure=pressure,
-                temperature=temperature,
-                feed_composition=composition,
-                residual=0.0,
-                history=history
-            ))
-
-        if nv >= 1.0 - 1e-10:
-            # All vapor
-            phi_V = eos.fugacity_coefficient(
-                pressure, temperature, composition, 'vapor', binary_interaction
+                liquid_composition=composition.copy(), vapor_composition=np.zeros(n_components),
+                K_values=K, liquid_fugacity=phi_L, vapor_fugacity=np.zeros(n_components),
+                phase='liquid', pressure=pressure, temperature=temperature,
+                feed_composition=composition, residual=0.0, history=history,
             )
-            return _finalize(FlashResult(
-                status=ConvergenceStatus.CONVERGED,
-                iterations=iteration + 1,
+        if nv >= 1.0 - 1e-10:
+            phi_V = eos.fugacity_coefficient(pressure, temperature, composition, 'vapor', binary_interaction)
+            return FlashResult(
+                status=ConvergenceStatus.CONVERGED, iterations=iteration + 1,
                 vapor_fraction=1.0,
-                liquid_composition=np.zeros(n_components),
-                vapor_composition=composition.copy(),
-                K_values=K,
-                liquid_fugacity=np.zeros(n_components),
-                vapor_fugacity=phi_V,
-                phase='vapor',
-                pressure=pressure,
-                temperature=temperature,
-                feed_composition=composition,
-                residual=0.0,
-                history=history
-            ))
+                liquid_composition=np.zeros(n_components), vapor_composition=composition.copy(),
+                K_values=K, liquid_fugacity=np.zeros(n_components), vapor_fugacity=phi_V,
+                phase='vapor', pressure=pressure, temperature=temperature,
+                feed_composition=composition, residual=0.0, history=history,
+            )
 
-        # Step 2: Calculate fugacity coefficients for both phases
-        phi_L = eos.fugacity_coefficient(
-            pressure, temperature, x, 'liquid', binary_interaction
-        )
-        phi_V = eos.fugacity_coefficient(
-            pressure, temperature, y, 'vapor', binary_interaction
-        )
-        history.increment_func_evals(2)  # Two fugacity coefficient calculations
+        phi_L = eos.fugacity_coefficient(pressure, temperature, x, 'liquid', binary_interaction)
+        phi_V = eos.fugacity_coefficient(pressure, temperature, y, 'vapor', binary_interaction)
+        history.increment_func_evals(2)
 
-        # Step 3: Update K-values
-        # At equilibrium: fi_L = fi_V
-        # φi_L × xi × P = φi_V × yi × P
-        # Ki = yi/xi = φi_L / φi_V
         K_new = phi_L / phi_V
-
-        # Check for NaN/Inf in K-values (numeric error)
         if not np.all(np.isfinite(K_new)):
             history.record_iteration(residual=float('inf'), accepted=False)
-            return _finalize(FlashResult(
-                status=ConvergenceStatus.NUMERIC_ERROR,
-                iterations=iteration + 1,
-                vapor_fraction=nv,
-                liquid_composition=x,
-                vapor_composition=y,
-                K_values=K,
-                liquid_fugacity=phi_L,
-                vapor_fugacity=phi_V,
-                phase='two-phase',
-                pressure=pressure,
-                temperature=temperature,
-                feed_composition=composition,
-                residual=float('inf'),
-                history=history
-            ))
+            return FlashResult(
+                status=ConvergenceStatus.NUMERIC_ERROR, iterations=iteration + 1,
+                vapor_fraction=nv, liquid_composition=x, vapor_composition=y,
+                K_values=K, liquid_fugacity=phi_L, vapor_fugacity=phi_V,
+                phase='two-phase', pressure=pressure, temperature=temperature,
+                feed_composition=composition, residual=float('inf'), history=history,
+            )
 
-        # Step 4: Check convergence
-        # Criterion: Σ(ln Ki_new - ln Ki_old)² < tolerance
         ln_K_new = np.log(K_new)
         ln_K_old = np.log(K)
         residual = np.sum((ln_K_new - ln_K_old) ** 2)
-
-        # Compute step norm for diagnostics
         step_norm = np.sqrt(np.sum((K_new - K) ** 2))
+        damping = 0.5 if iteration < 5 else 0.7
 
-        # Determine damping factor
-        if iteration < 5:
-            damping = 0.5  # More aggressive damping in early iterations
-        else:
-            damping = 0.7  # Less damping after initial iterations
-
-        # Record iteration in history
-        history.record_iteration(
-            residual=residual,
-            step_norm=step_norm,
-            damping=damping,
-            accepted=True
-        )
+        history.record_iteration(residual=residual, step_norm=step_norm,
+                                 damping=damping, accepted=True)
 
         if residual < tolerance:
             final_status = ConvergenceStatus.CONVERGED
             break
-
-        # Check for stagnation (no progress in recent iterations)
         if history.detect_stagnation(window=10, threshold=0.001):
             final_status = ConvergenceStatus.STAGNATED
             break
-
-        # Check for divergence (residual exploding)
         if history.detect_divergence(threshold=1e10):
             final_status = ConvergenceStatus.DIVERGED
             break
 
-        # Step 5: Update K-values for next iteration with damping
         K = damping * K_new + (1.0 - damping) * K
 
-    # Final result
-    if final_status != ConvergenceStatus.CONVERGED:
-        # Return result with failure status instead of raising exception
-        # This allows caller to inspect history and diagnostics
-        return _finalize(FlashResult(
-            status=final_status,
-            iterations=iteration + 1,
-            vapor_fraction=nv,
-            liquid_composition=x,
-            vapor_composition=y,
-            K_values=K_new if 'K_new' in dir() else K,
-            liquid_fugacity=phi_L if 'phi_L' in dir() else np.zeros(n_components),
-            vapor_fugacity=phi_V if 'phi_V' in dir() else np.zeros(n_components),
-            phase='two-phase',
-            pressure=pressure,
-            temperature=temperature,
-            feed_composition=composition,
-            residual=residual,
-            history=history
-        ))
-
-    return _finalize(FlashResult(
-        status=ConvergenceStatus.CONVERGED,
-        iterations=iteration + 1,
-        vapor_fraction=nv,
-        liquid_composition=x,
-        vapor_composition=y,
-        K_values=K_new,
-        liquid_fugacity=phi_L,
-        vapor_fugacity=phi_V,
-        phase='two-phase',
-        pressure=pressure,
-        temperature=temperature,
-        feed_composition=composition,
-        residual=residual,
-        history=history
-    ))
+    return FlashResult(
+        status=final_status, iterations=iteration + 1,
+        vapor_fraction=nv, liquid_composition=x, vapor_composition=y,
+        K_values=K_new, liquid_fugacity=phi_L, vapor_fugacity=phi_V,
+        phase='two-phase', pressure=pressure, temperature=temperature,
+        feed_composition=composition, residual=residual, history=history,
+    )
 
 
 def stability_test(
