@@ -199,6 +199,33 @@ fully green full-suite run.
 - Preserve forward progress first; tighten correctness iteratively instead of
   turning every checkpoint into a full cleanup pass.
 
+### Functional Reconciliation Gate
+
+Do not treat a clean merge as proof that behavior survived.
+
+- Any merge, absorb, cherry-pick, rebase, or similar operation affecting
+  `main` is only `R1` mechanical until the merged tree preserves the intended
+  union of load-bearing behavior from both sides.
+- Before calling a `main`-affecting absorb complete, perform an explicit
+  accounting pass over:
+  - shared files/modules
+  - branch-owned runtime/app behavior
+  - branch-owned schemas/contracts
+  - branch-owned tests and validation assets
+  - branch-owned operational scripts/docs
+  - tracked env/config surfaces
+  - explicit retirements, if any
+- Do not resolve a shared surface by taking one side wholesale just because it
+  is faster or conflict-free.
+- Silent deletion of tests, validation assets, runtime wiring, GUI controls,
+  schema fields, or tracked env/config files is a merge failure unless the
+  retirement is named and approved.
+- Merge closeout affecting `main` must state the current reconciliation level
+  (`R0` through `R4`), preserved/retired surfaces, targeted verification run,
+  and residual risk.
+- If time only permits a mechanical merge, label it honestly as `R1` and not
+  functionally reconciled.
+
 ## Worker Boundaries
 
 Workers may:

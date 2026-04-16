@@ -1,0 +1,21 @@
+---
+description: Functional merge gate and environment contract for Cursor work
+alwaysApply: true
+---
+
+- Do not equate a clean merge, clean staging area, or conflict-free tree with preserved behavior. Any `main`-affecting absorb below `R2` is incomplete.
+- Before calling a merge or absorb complete, explicitly account for:
+  - shared files/modules
+  - branch-owned runtime/app behavior
+  - branch-owned schemas/contracts
+  - branch-owned tests and validation assets
+  - branch-owned scripts/docs
+  - tracked env/config surfaces
+  - explicit retirements, if any
+- Never resolve a shared surface by taking one side wholesale just to avoid conflict work. Silent deletion of tests, validation assets, runtime wiring, GUI controls, schema fields, or tracked env/config files is a merge failure unless the retirement is named and approved.
+- For thermo, numerical, runtime, or workflow work, targeted verification must compare the merged result against the prior validated surface or the appropriate equation/reference authority. Import success or a clean smoke run is not enough.
+- Env contract:
+  - shared repo-safe defaults live in `.env.defaults`
+  - machine-local overrides and secrets live in ignored `.env`
+  - keep Cursor/VS Code pointing at `.env.defaults`, not `.env`
+  - `.cursor/mcp.json` is a local copy of `.cursor/mcp.json.example`; do not commit machine-specific paths
