@@ -89,9 +89,32 @@ def calculate_phase_envelope(
     saturation_post_check_stability_flip: bool = False,
     saturation_post_check_action: str = "raise",
     saturation_post_check_rel_step: float = 0.01,
-    detect_critical: bool = True
+    detect_critical: bool = True,
+    use_newton: bool = True,
 ) -> EnvelopeResult:
-    """Calculate phase envelope using continuation method."""
+    """Calculate phase envelope.
+
+    By default uses Newton iteration with warm-starting (fast path).
+    Falls back to the original TPD+Brent method if Newton fails or if
+    use_newton=False.
+    """
+    if use_newton:
+        try:
+            from .fast_envelope import calculate_phase_envelope_fast
+            result = calculate_phase_envelope_fast(
+                composition, components, eos,
+                binary_interaction=binary_interaction,
+                T_start=T_start,
+                T_step_initial=T_step_initial,
+                max_points=max_points,
+                detect_critical=detect_critical,
+            )
+            if result.converged:
+                return result
+        except Exception:
+            pass
+
+    # Original TPD+Brent path (robust fallback)
     # Validate inputs
     composition = np.asarray(composition, dtype=np.float64)
 
