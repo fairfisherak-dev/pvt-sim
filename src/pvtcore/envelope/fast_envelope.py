@@ -380,7 +380,7 @@ def _ss_dew_point(
 _T_SAFETY = 1.5
 _MIN_DT = 0.5
 _MAX_DT = 20.0
-_PRESSURE_DECREASE_LIMIT = 5
+_PRESSURE_DECREASE_LIMIT = 10
 
 
 def _trace_branch(
@@ -430,14 +430,18 @@ def _trace_branch(
 
         if K_prev is None:
             P_guess = _wilson_bubble_or_dew_pressure(components, T, z, branch)
-            P_guess = np.clip(P_guess, 1e4, 5e8)
+            P_guess = np.clip(P_guess, 1e3, 5e8)
             K_guess = _wilson_k(components, T, P_guess)
-            try:
-                P_ss, _, K_ss = ss_fn(T, P_guess, K_guess, z, eos, binary_interaction, max_iter=12)
-                if np.all(np.isfinite(K_ss)) and np.max(np.abs(np.log(np.clip(K_ss, 1e-30, 1e30)))) > 0.01:
-                    P_guess, K_guess = P_ss, K_ss
-            except Exception:
-                pass
+            if branch == "bubble":
+                # SS warm-up helps bubble branch converge from Wilson
+                try:
+                    P_ss, _, K_ss = ss_fn(T, P_guess, K_guess, z, eos, binary_interaction, max_iter=12)
+                    if np.all(np.isfinite(K_ss)) and np.max(np.abs(np.log(np.clip(K_ss, 1e-30, 1e30)))) > 0.01:
+                        P_guess, K_guess = P_ss, K_ss
+                except Exception:
+                    pass
+            # For dew: go straight to Newton from Wilson — SS is unstable
+            # for asymmetric mixtures with extreme K ratios
         else:
             P_guess = P_prev
             K_guess = K_prev
@@ -505,7 +509,12 @@ def _locate_critical(
     dew_T: NDArray[np.float64],
     dew_P: NDArray[np.float64],
 ) -> Tuple[Optional[float], Optional[float]]:
-    """Find critical point as highest-T meeting of bubble and dew curves."""
+    """Find critical point where bubble and dew curves converge.
+
+    The critical point is the highest-pressure point where the bubble and
+    dew pressures are within tolerance at the same temperature.  This avoids
+    spurious low-pressure intersections that can occur at low T.
+    """
     if len(bubble_P) == 0 or len(dew_P) == 0:
         return None, None
 
@@ -525,16 +534,24 @@ def _locate_critical(
     Pd = np.interp(Tc, dew_T[d_order], dew_P[d_order])
     dP = np.abs(Pb - Pd)
 
-    tol = 1e5
+    tol = 1e5  # Pa
     ok = dP <= tol
     if not np.any(ok):
+        # Relax tolerance: use smallest relative pressure gap
+        P_avg = 0.5 * (Pb + Pd)
+        rel_gap = dP / np.maximum(P_avg, 1e3)
+        best = int(np.argmin(rel_gap))
+        if rel_gap[best] < 0.1:  # within 10% relative
+            return float(Tc[best]), float(0.5 * (Pb[best] + Pd[best]))
         return None, None
 
-    idx = int(np.argmax(Tc[ok]))
-    T_crit = float(Tc[ok][idx])
-    j = int(np.where(Tc == T_crit)[0][0])
-    P_crit = float(0.5 * (Pb[j] + Pd[j]))
-    return T_crit, P_crit
+    # Among meeting points, pick the one at highest pressure (true critical)
+    Tc_ok = Tc[ok]
+    Pb_ok = Pb[ok]
+    Pd_ok = Pd[ok]
+    P_avg_ok = 0.5 * (Pb_ok + Pd_ok)
+    idx = int(np.argmax(P_avg_ok))
+    return float(Tc_ok[idx]), float(P_avg_ok[idx])
 
 
 # ---------------------------------------------------------------------------
@@ -584,7 +601,11 @@ def calculate_phase_envelope_fast(
 
     crit_T, crit_P = None, None
     if detect_critical and (len(bub_T) > 0 or len(dew_T) > 0):
-        crit_T, crit_P = _locate_critical(bub_T_arr, bub_P_arr, dew_T_arr, dew_P_arr)
+        from .critical_point import detect_critical_point
+        crit_T, crit_P = detect_critical_point(
+            bub_T_arr, bub_P_arr, dew_T_arr, dew_P_arr,
+            z, components, eos, binary_interaction,
+        )
 
     return EnvelopeResult(
         bubble_T=bub_T_arr,
