@@ -275,8 +275,8 @@ class PVTSimulatorWindow(QMainWindow):
         self.run_log_widget = RunLogWidget()
 
         view_specs = [
-            ViewSpec("critical_props", "Critical prop."),
-            ViewSpec("interaction_params", "Interaction para."),
+            ViewSpec("critical_props", "Critical properties"),
+            ViewSpec("interaction_params", "Interaction parameters"),
             ViewSpec("log", "Log"),
             ViewSpec("text_output", "Text output"),
             ViewSpec("phase_envelope", "Plot"),
