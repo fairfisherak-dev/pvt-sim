@@ -191,6 +191,66 @@ QLineEdit, QTextEdit, QTextBrowser {{
   selection-background-color: {palette['selection_bg']};
 }}
 
+QAbstractSpinBox {{
+  background: {palette['surface_bg']};
+  border: 1px solid {palette['border']};
+  border-radius: {px(6)}px;
+  padding: {px(4)}px {px(6)}px;
+  selection-background-color: {palette['selection_bg']};
+}}
+QAbstractSpinBox:hover {{
+  border-color: {palette['surface_hover_bg']};
+}}
+QAbstractSpinBox:focus {{
+  border-color: {palette['selection_bg']};
+}}
+QAbstractSpinBox:disabled {{
+  color: {palette['text_disabled']};
+  background: {palette['surface_disabled_bg']};
+}}
+QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{
+  subcontrol-origin: border;
+  background: transparent;
+  border: none;
+  width: {px(14)}px;
+}}
+QAbstractSpinBox::up-button {{
+  subcontrol-position: top right;
+  margin-right: {px(2)}px;
+}}
+QAbstractSpinBox::down-button {{
+  subcontrol-position: bottom right;
+  margin-right: {px(2)}px;
+}}
+QAbstractSpinBox::up-arrow {{
+  image: none;
+  border-left: {px(4)}px solid transparent;
+  border-right: {px(4)}px solid transparent;
+  border-bottom: {px(5)}px solid {palette['text_muted']};
+  width: 0px;
+  height: 0px;
+}}
+QAbstractSpinBox::down-arrow {{
+  image: none;
+  border-left: {px(4)}px solid transparent;
+  border-right: {px(4)}px solid transparent;
+  border-top: {px(5)}px solid {palette['text_muted']};
+  width: 0px;
+  height: 0px;
+}}
+QAbstractSpinBox::up-button:hover {{
+  background: {palette['surface_hover_bg']};
+}}
+QAbstractSpinBox::down-button:hover {{
+  background: {palette['surface_hover_bg']};
+}}
+QAbstractSpinBox::up-arrow:hover, QAbstractSpinBox::up-arrow:pressed {{
+  border-bottom-color: {palette['text']};
+}}
+QAbstractSpinBox::down-arrow:hover, QAbstractSpinBox::down-arrow:pressed {{
+  border-top-color: {palette['text']};
+}}
+
 QComboBox {{
   background: {palette['surface_elevated_bg']};
   border: 1px solid {palette['border']};
