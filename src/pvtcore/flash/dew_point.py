@@ -165,8 +165,18 @@ def _try_multi_seed_newton_dew(
     binary_interaction: Optional[NDArray[np.float64]],
     max_iterations: int,
     pressure_initial: Optional[float],
+    prefer_canonical_branch: bool = False,
 ) -> Optional[DewPointResult]:
-    """Wilson/SS + Newton from multiple pressure seeds."""
+    """Wilson/SS + Newton from multiple pressure seeds.
+
+    When prefer_canonical_branch is True, candidate ranking ignores
+    pressure_initial and always picks the Wilson-nearest result — the canonical
+    lower dew branch per lecture slide 385 (Wilson-seed fugacity-equality
+    Newton). Use this for standalone user queries where pressure_initial is a
+    guess, not a branch selector. Leave False for envelope continuation, where
+    pressure_initial is the previous converged point and branch continuity
+    across the grid is the required behavior.
+    """
     try:
         from ..solvers.saturation_newton import (
             _newton_dew_point,
@@ -260,8 +270,14 @@ def _try_multi_seed_newton_dew(
             continue
     if not candidates:
         return None
-    # Match bubble_point: follow ``pressure_initial`` for branch continuity on grids.
-    if pressure_initial is not None and np.isfinite(pressure_initial) and float(pressure_initial) > 0.0:
+    # Match bubble_point: follow ``pressure_initial`` for branch continuity on grids,
+    # unless the caller asked for the canonical (Wilson-nearest) dew branch.
+    if (
+        not prefer_canonical_branch
+        and pressure_initial is not None
+        and np.isfinite(pressure_initial)
+        and float(pressure_initial) > 0.0
+    ):
         p_cont = float(np.clip(float(pressure_initial), PRESSURE_MIN, PRESSURE_MAX))
         return min(
             candidates,
@@ -328,8 +344,16 @@ def calculate_dew_point(
     post_check_stability_flip: bool = False,
     post_check_action: str = "raise",
     post_check_rel_step: float = 0.01,
+    prefer_canonical_branch: bool = False,
 ) -> DewPointResult:
-    """Compute dew point pressure at fixed temperature."""
+    """Compute dew point pressure at fixed temperature.
+
+    prefer_canonical_branch: when True, return the canonical lower dew branch
+    (Wilson-nearest candidate) regardless of ``pressure_initial``. Use for
+    standalone queries where ``pressure_initial`` is a user guess, not a branch
+    selector. Envelope continuation should leave this False to preserve branch
+    continuity along the grid.
+    """
     # === Input Validation ===
     # Validate component list
     if not components:
@@ -474,6 +498,7 @@ def calculate_dew_point(
         binary_interaction,
         max_iterations,
         pressure_initial,
+        prefer_canonical_branch=prefer_canonical_branch,
     )
     if ms is not None:
         return _finalize(ms)

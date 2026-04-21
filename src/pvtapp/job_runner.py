@@ -2896,6 +2896,7 @@ def execute_dew_point(
         binary_interaction=binary_interaction,
         tolerance=config.solver_settings.tolerance,
         max_iterations=config.solver_settings.max_iterations,
+        prefer_canonical_branch=True,
     )
 
     if callback:
