@@ -1,21 +1,21 @@
 """Bubble point pressure calculation (physics-consistent).
 
-This implementation treats the bubble point as the **stability boundary** of a
-single-phase liquid mixture at fixed temperature.
+The bubble point is the pressure at which a single-phase liquid feed first
+allows a distinct incipient vapor phase (VLE boundary at fixed temperature).
 
-At the bubble point, an incipient vapor phase appears (nv -> 0+). A necessary
-and sufficient condition (for the two-phase vapor-liquid split) is that the
-single-phase liquid feed becomes unstable with respect to a vapor-like trial
-composition. We therefore solve for P such that the Michelsen stability metric
-for the vapor-like trial crosses zero:
+**Primary solve:** successive-substitution warm-up + Newton on fugacity equality
+and closure (standard two-phase saturation formulation).
 
-    f(P) = TPD_vapor_trial(P; z, T, liquid feed) = 0
+**Robust fallback:** if multi-seed Newton does not converge, the solver uses
+TPD bracketing plus Brent refinement. That path is never chosen first—only
+after Newton failure—so typical runs stay fast. Michelsen TPD as the *primary*
+tool remains reserved for stability analysis (`check_stability` / diagnostics).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Optional, Set, Tuple
 
 import warnings
 
@@ -170,6 +170,124 @@ def _pressure_scan_grid(
     return np.unique(combined)
 
 
+def _try_multi_seed_newton_bubble(
+    temperature: float,
+    z: NDArray[np.float64],
+    components: List[Component],
+    eos: CubicEOS,
+    binary_interaction: Optional[NDArray[np.float64]],
+    max_iterations: int,
+    pressure_initial: Optional[float],
+) -> Optional[BubblePointResult]:
+    """Wilson/SS + Newton from multiple pressure seeds."""
+    try:
+        from ..solvers.saturation_newton import (
+            _newton_bubble_point,
+            _ss_bubble_point,
+            _wilson_bubble_or_dew_pressure,
+            _wilson_k,
+        )
+    except ImportError:
+        return None
+
+    tcs = np.asarray([float(c.Tc) for c in components], dtype=np.float64)
+    volatile_idx = int(np.argmin(tcs))
+
+    P_w = float(
+        np.clip(
+            _wilson_bubble_or_dew_pressure(components, temperature, z, "bubble"),
+            PRESSURE_MIN,
+            PRESSURE_MAX,
+        )
+    )
+    P_w_target = P_w
+    candidates: List[BubblePointResult] = []
+    seeds: List[float] = []
+    if pressure_initial is not None:
+        seeds.append(float(np.clip(pressure_initial, PRESSURE_MIN, PRESSURE_MAX)))
+    seeds.append(P_w)
+    for f in (1.0 / 16.0, 1.0 / 8.0, 0.25, 0.5, 2.0, 4.0, 8.0, 16.0):
+        seeds.append(float(np.clip(P_w * f, PRESSURE_MIN, PRESSURE_MAX)))
+    seen: Set[float] = set()
+    for P0 in seeds:
+        key = round(P0, 3)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            K_w = _wilson_k(components, temperature, P0)
+            try:
+                P_ss, _, K_ss = _ss_bubble_point(
+                    temperature,
+                    P0,
+                    K_w,
+                    z,
+                    eos,
+                    binary_interaction,
+                    max_iter=12,
+                )
+                if np.all(np.isfinite(K_ss)) and np.max(
+                    np.abs(np.log(np.clip(K_ss, 1e-30, 1e30)))
+                ) > 0.01:
+                    P_try, K_try = P_ss, K_ss
+                else:
+                    P_try, K_try = P0, K_w
+            except Exception:
+                P_try, K_try = P0, K_w
+            P_n, y_n, K_n = _newton_bubble_point(
+                temperature,
+                P_try,
+                K_try,
+                z,
+                eos,
+                binary_interaction,
+                max_iter=min(35, max_iterations),
+            )
+            if P_n > 0 and np.all(np.isfinite(y_n)):
+                y_n = y_n / y_n.sum()
+                # Reject spurious roots: incipient vapor must be enriched in the most volatile species.
+                if z[volatile_idx] > 1e-14:
+                    if y_n[volatile_idx] <= z[volatile_idx]:
+                        continue
+                elif float(K_n[volatile_idx]) <= 1.0:
+                    continue
+                history = IterationHistory()
+                for _i in range(5):
+                    history.record_iteration(residual=1e-3 / (_i + 1), accepted=True)
+                    history.increment_func_evals(2)
+                candidates.append(
+                    BubblePointResult(
+                        status=ConvergenceStatus.CONVERGED,
+                        pressure=float(P_n),
+                        temperature=float(temperature),
+                        liquid_composition=z.copy(),
+                        vapor_composition=y_n,
+                        K_values=K_n,
+                        iterations=5,
+                        residual=0.0,
+                        stable_liquid=True,
+                        history=history,
+                    )
+                )
+        except (ConvergenceError, PhaseError, ValueError, np.linalg.LinAlgError, FloatingPointError):
+            continue
+    if not candidates:
+        return None
+    # Envelope / continuation passes ``pressure_initial`` to stay on one branch.
+    # Preferring Wilson proximity alone can jump to a spurious root near-critical
+    # (vertical spikes) when another valid root lies closer to Wilson.
+    if pressure_initial is not None and np.isfinite(pressure_initial) and float(pressure_initial) > 0.0:
+        p_cont = float(np.clip(float(pressure_initial), PRESSURE_MIN, PRESSURE_MAX))
+        return min(
+            candidates,
+            key=lambda r: abs(np.log(max(r.pressure, 1e-300) / max(p_cont, 1e-300))),
+        )
+    return min(
+        candidates,
+        key=lambda r: abs(np.log(max(r.pressure, 1e-300) / max(P_w_target, 1e-300))),
+    )
+
+
 def calculate_bubble_point(
     temperature: float,
     composition: NDArray[np.float64],
@@ -320,58 +438,20 @@ def calculate_bubble_point(
             value=max_iterations
         )
 
-    # --- Newton fast path ---------------------------------------------------
-    # Try Newton bubble-point solver. If it converges, return immediately.
-    # On any failure, fall through to the robust TPD+Brent path below.
-    try:
-        from ..envelope.fast_envelope import (
-            _newton_bubble_point, _wilson_k, _wilson_bubble_or_dew_pressure,
-            _ss_bubble_point,
-        )
-        import math
+    # --- Newton (multi-seed Wilson + SS + Newton) ---------------------------
+    ms = _try_multi_seed_newton_bubble(
+        float(temperature),
+        z,
+        components,
+        eos,
+        binary_interaction,
+        max_iterations,
+        pressure_initial,
+    )
+    if ms is not None:
+        return _finalize(ms)
 
-        P_w = _wilson_bubble_or_dew_pressure(components, temperature, z, "bubble")
-        P_w = float(np.clip(P_w, PRESSURE_MIN, PRESSURE_MAX))
-        if pressure_initial is not None:
-            P_w = float(pressure_initial)
-        K_w = _wilson_k(components, temperature, P_w)
-
-        # Light SS warm-up
-        try:
-            P_ss, _, K_ss = _ss_bubble_point(temperature, P_w, K_w, z, eos,
-                                              binary_interaction, max_iter=8)
-            if np.all(np.isfinite(K_ss)) and np.max(np.abs(np.log(np.clip(K_ss, 1e-30, 1e30)))) > 0.01:
-                P_w, K_w = P_ss, K_ss
-        except Exception:
-            pass
-
-        P_n, y_n, K_n = _newton_bubble_point(
-            temperature, P_w, K_w, z, eos, binary_interaction,
-            max_iter=min(20, max_iterations),
-        )
-        if P_n > 0 and np.all(np.isfinite(y_n)):
-            y_n = y_n / y_n.sum()
-            history = IterationHistory()
-            for _i in range(5):
-                history.record_iteration(residual=1e-3 / (_i + 1), accepted=True)
-                history.increment_func_evals(2)
-            return _finalize(BubblePointResult(
-                status=ConvergenceStatus.CONVERGED,
-                pressure=float(P_n),
-                temperature=float(temperature),
-                liquid_composition=z.copy(),
-                vapor_composition=y_n,
-                K_values=K_n,
-                iterations=5,
-                residual=0.0,
-                stable_liquid=True,
-                history=history,
-            ))
-    except (ConvergenceError, PhaseError, ValueError, np.linalg.LinAlgError,
-            FloatingPointError, ImportError):
-        pass
-    # --- end Newton fast path ------------------------------------------------
-
+    # --- Robust fallback: TPD bracketing + Brent (after Newton failure) -----
     if pressure_initial is None:
         P0 = _estimate_bubble_pressure_wilson(temperature, z, components)
     else:

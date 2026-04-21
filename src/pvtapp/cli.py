@@ -117,6 +117,16 @@ def print_result_summary(result: RunResult) -> None:
         print(f"  Dew Points: {len(res.dew_curve)}")
         if res.continuation_switched is not None:
             print(f"  Switched: {'yes' if res.continuation_switched else 'no'}")
+        if res.bubble_termination_reason is not None:
+            bubble_stop = res.bubble_termination_reason
+            if res.bubble_termination_temperature_k is not None:
+                bubble_stop = f"{bubble_stop} @ {res.bubble_termination_temperature_k - 273.15:.2f} C"
+            print(f"  Bubble Stop: {bubble_stop}")
+        if res.dew_termination_reason is not None:
+            dew_stop = res.dew_termination_reason
+            if res.dew_termination_temperature_k is not None:
+                dew_stop = f"{dew_stop} @ {res.dew_termination_temperature_k - 273.15:.2f} C"
+            print(f"  Dew Stop: {dew_stop}")
         if res.critical_point:
             print(f"  Critical Point: "
                   f"{res.critical_point.temperature_k - 273.15:.2f} C, "

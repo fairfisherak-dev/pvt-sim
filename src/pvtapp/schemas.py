@@ -625,7 +625,7 @@ class PTFlashConfig(BaseModel):
         description="Temperature in Kelvin"
     )
     pressure_unit: PressureUnit = Field(
-        default=PressureUnit.BAR,
+        default=PressureUnit.PSIA,
         description="Preferred pressure unit for GUI input/output"
     )
     temperature_unit: TemperatureUnit = Field(
@@ -676,7 +676,7 @@ class StabilityAnalysisConfig(BaseModel):
         description="Maximum transient EOS evaluation failures tolerated per trial branch",
     )
     pressure_unit: PressureUnit = Field(
-        default=PressureUnit.BAR,
+        default=PressureUnit.PSIA,
         description="Preferred pressure unit for GUI input/output",
     )
     temperature_unit: TemperatureUnit = Field(
@@ -707,8 +707,12 @@ class PhaseEnvelopeConfig(BaseModel):
         description="Number of points on each branch"
     )
     tracing_method: PhaseEnvelopeTracingMethod = Field(
-        default=PhaseEnvelopeTracingMethod.CONTINUATION,
-        description="Tracing implementation to use for phase-envelope execution",
+        default=PhaseEnvelopeTracingMethod.FIXED_GRID,
+        description=(
+            "Fixed grid: one bubble + one dew saturation solve per temperature node with "
+            "pressure warm-start (typical interactive cost, seconds). Continuation: adaptive "
+            "branch tracing with critical handling for difficult multi-root fluids (slower)."
+        ),
     )
 
     @field_validator('tracing_method', mode='before')
@@ -764,7 +768,7 @@ class CCEConfig(BaseModel):
         ),
     )
     pressure_unit: PressureUnit = Field(
-        default=PressureUnit.BAR,
+        default=PressureUnit.PSIA,
         description="Preferred pressure unit for GUI input/output",
     )
     temperature_unit: TemperatureUnit = Field(
@@ -819,7 +823,7 @@ class SaturationPointConfig(BaseModel):
         description="Optional initial pressure guess (Pa)"
     )
     pressure_unit: PressureUnit = Field(
-        default=PressureUnit.BAR,
+        default=PressureUnit.PSIA,
         description="Preferred pressure unit for GUI input/output"
     )
     temperature_unit: TemperatureUnit = Field(
@@ -863,7 +867,7 @@ class DLConfig(BaseModel):
         ),
     )
     pressure_unit: PressureUnit = Field(
-        default=PressureUnit.BAR,
+        default=PressureUnit.PSIA,
         description="Preferred pressure unit for GUI input/output",
     )
     temperature_unit: TemperatureUnit = Field(
@@ -961,7 +965,7 @@ class SwellingTestConfig(BaseModel):
         description="Explicit resolved injection-gas composition on a component-row basis",
     )
     pressure_unit: PressureUnit = Field(
-        default=PressureUnit.BAR,
+        default=PressureUnit.PSIA,
         description="Preferred pressure unit for GUI input/output",
     )
     temperature_unit: TemperatureUnit = Field(
@@ -1548,11 +1552,13 @@ class PhaseEnvelopeResult(BaseModel):
     critical_point: Optional[PhaseEnvelopePoint] = None
     cricondenbar: Optional[PhaseEnvelopePoint] = None
     cricondentherm: Optional[PhaseEnvelopePoint] = None
-    tracing_method: PhaseEnvelopeTracingMethod = PhaseEnvelopeTracingMethod.CONTINUATION
+    tracing_method: PhaseEnvelopeTracingMethod = PhaseEnvelopeTracingMethod.FIXED_GRID
     continuation_switched: Optional[bool] = None
     critical_source: Optional[str] = None
     bubble_termination_reason: Optional[str] = None
+    bubble_termination_temperature_k: Optional[float] = None
     dew_termination_reason: Optional[str] = None
+    dew_termination_temperature_k: Optional[float] = None
 
     @field_validator('tracing_method', mode='before')
     @classmethod

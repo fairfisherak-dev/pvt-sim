@@ -262,8 +262,8 @@ QPushButton#CancelButton:hover {{
 QGroupBox {{
   background: transparent;
   border: none;
-  margin-top: {px(8)}px;
-  padding: {px(4)}px 0 0 0;
+  margin-top: {px(4)}px;
+  padding: {px(2)}px 0 0 0;
 }}
 QGroupBox::title {{
   subcontrol-origin: margin;
@@ -273,7 +273,7 @@ QGroupBox::title {{
 QGroupBox#ResultsSection {{
   background: transparent;
   border: none;
-  margin-top: {px(10)}px;
+  margin-top: {px(5)}px;
   padding: 0;
 }}
 QGroupBox#ResultsSection::title {{

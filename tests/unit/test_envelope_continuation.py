@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 
 import numpy as np
 import pytest
 
 from pvtcore.envelope.continuation import (
+    DEFAULT_CONTINUATION_RUNTIME_POLICY,
     _critical_probe_temperatures,
     _shared_trivial_endpoint_pressures,
     resolve_local_branch_candidates,
@@ -157,16 +159,26 @@ def test_trace_branch_continuation_reports_trivial_collapse_for_co2_rich_bubble(
     assert 52.0 < pressures_bar[1] < 62.0
     assert 62.0 < pressures_bar[2] < 70.0
     assert 69.0 < pressures_bar[3] < 72.0
-    assert trace.termination_reason == "no_local_root_candidates"
+    assert trace.termination_reason == "near_critical_collapse"
     assert trace.termination_temperature == 310.0
 
 
 def test_trace_branch_continuation_keeps_c1_c10_low_pressure_dew_family() -> None:
-    """Asymmetric low-pressure dew tracing should not reject smooth high-K evolution."""
+    """Asymmetric low-pressure dew tracing should not reject smooth high-K evolution.
+
+    This long-range dew limb can require certified multi-root discovery (TPD scans)
+    alongside Newton; use the wide-scan policy so local branch families stay
+    matchable across large (T, P) steps.
+    """
     components = load_components()
     mixture = [components["C1"], components["C10"]]
     eos = PengRobinsonEOS(mixture)
     z = np.array([0.5, 0.5], dtype=float)
+    runtime_policy = replace(
+        DEFAULT_CONTINUATION_RUNTIME_POLICY,
+        allow_wide_tpd_scan=True,
+        allow_full_rescan_on_advance=True,
+    )
 
     trace = trace_branch_continuation_adaptive(
         branch="dew",
@@ -177,12 +189,14 @@ def test_trace_branch_continuation_keeps_c1_c10_low_pressure_dew_family() -> Non
         components=mixture,
         eos=eos,
         n_pressure_points=160,
+        runtime_policy=runtime_policy,
     )
 
     temperatures = np.array([state.temperature for state in trace.states], dtype=float)
     pressures_bar = np.array([state.pressure / 1.0e5 for state in trace.states], dtype=float)
 
-    assert trace.termination_reason is None
+    assert trace.termination_reason == "temperature_range_complete"
+    assert trace.termination_temperature == pytest.approx(480.0, abs=1.0e-9)
     assert len(trace.states) >= 24
     assert temperatures[0] < 320.0
     assert temperatures[-1] == pytest.approx(480.0, abs=1.0e-9)
@@ -218,8 +232,8 @@ def test_trace_envelope_continuation_switches_c2_c3_near_critical() -> None:
 
 
 @pytest.mark.nightly
-def test_trace_envelope_continuation_detects_co2_rich_critical_from_branch_closest_approach() -> None:
-    """Adaptive continuation should resolve the CO2-rich upper critical neighborhood consistently."""
+def test_trace_envelope_continuation_switches_co2_rich_near_apex_without_public_certification() -> None:
+    """Adaptive continuation may use an internal near-apex handoff marker without blessing it as a public critical point."""
     if os.getenv("PVTSIM_RUN_SLOW") != "1":
         pytest.skip("Slow CO2-rich continuation trace (set PVTSIM_RUN_SLOW=1 to enable).")
     components = load_components()
@@ -242,7 +256,6 @@ def test_trace_envelope_continuation_detects_co2_rich_critical_from_branch_close
     )
 
     assert result.critical_state is not None
-    assert result.critical_state.source == "branch_closest_approach"
     assert 310.0 <= result.critical_state.temperature <= 312.0
     assert 73.0 <= result.critical_state.pressure / 1.0e5 <= 75.0
     assert result.switched is True

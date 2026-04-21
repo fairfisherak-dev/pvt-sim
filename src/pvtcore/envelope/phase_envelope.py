@@ -95,8 +95,8 @@ def calculate_phase_envelope(
     """Calculate phase envelope.
 
     By default uses Newton iteration with warm-starting (fast path).
-    Falls back to the original TPD+Brent method if Newton fails or if
-    use_newton=False.
+    Falls back to the original TPD+Brent method only when the fast tracer
+    raises or returns no bubble/dew points, or when ``use_newton`` is False.
     """
     if use_newton:
         try:
@@ -109,7 +109,11 @@ def calculate_phase_envelope(
                 max_points=max_points,
                 detect_critical=detect_critical,
             )
-            if result.converged:
+            # Prefer the Newton/Michelsen trace whenever it produced any branch
+            # data. The legacy ``converged`` flag required >3 points per branch
+            # and forced an unnecessary fallback to the slow TPD+Brent tracer
+            # for otherwise valid partial envelopes (e.g. near-critical stops).
+            if len(result.bubble_T) > 0 or len(result.dew_T) > 0:
                 return result
         except Exception:
             pass
