@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QLabel, QTextEdit, QVBoxLayout, QWidget
 
@@ -211,6 +212,13 @@ class TextOutputWidget(QWidget):
 
         self.text = QTextEdit()
         self.text.setReadOnly(True)
+        # Disable word wrap so report columns (CCE/DL/CVD/stability tables)
+        # stay aligned at any window width. Qt will add a horizontal scroll
+        # bar automatically when the monospaced grid is wider than the
+        # viewport; the user scrolls horizontally instead of having column
+        # headers drift out of sync with their value rows.
+        self.text.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        self.text.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         mono = QFont("Consolas")
         mono.setStyleHint(QFont.StyleHint.Monospace)
         self.text.setFont(mono)
@@ -718,7 +726,7 @@ class TextOutputWidget(QWidget):
                 f"{'\u03c1\u1d65':>9s} "
                 f"{'\u03bc\u2097':>8s} "
                 f"{'\u03bc\u1d65':>8s} "
-                f"{'Z-factor':>10s}"
+                f"{'Z\u2011factor':>10s}"
             )
             for step in r.steps[:80]:
                 z = step.z_factor
@@ -793,7 +801,19 @@ class TextOutputWidget(QWidget):
             lines.append(f"Converged: {r.converged}")
             lines.append("")
             lines.append(
-                f"P ({pressure_unit.value})        RsD       RsDb         Bo         Bg        BtD    CumGas   VaporFrac      rhoL    OilMu    GasSG     GasZ    GasMu"
+                f"{f'P ({pressure_unit.value})':>10s} "
+                f"{'RsD':>10s} "
+                f"{'RsDb':>10s} "
+                f"{'Bo':>10s} "
+                f"{'Bg':>10s} "
+                f"{'BtD':>10s} "
+                f"{'CumGas':>9s} "
+                f"{'VaporFrac':>11s} "
+                f"{'\u03c1\u2097':>9s} "
+                f"{'\u03bc_oil':>8s} "
+                f"{'GasSG':>8s} "
+                f"{'GasZ':>8s} "
+                f"{'\u03bc_gas':>8s}"
             )
             for step in r.steps[:80]:
                 bg_txt = "-" if step.bg is None else f"{step.bg:.5f}"
@@ -848,7 +868,15 @@ class TextOutputWidget(QWidget):
             lines.append(f"Initial Z = {r.initial_z:.5f}")
             lines.append("")
             lines.append(
-                "P (bar)     Liquid Dropout   Gas Prod.   Cum. Gas     Z      rhoL      rhoV      muL      muV"
+                f"{'P (bar)':>10s} "
+                f"{'Liquid Dropout':>16s} "
+                f"{'Gas Prod.':>11s} "
+                f"{'Cum. Gas':>10s} "
+                f"{'Z':>8s} "
+                f"{'\u03c1\u2097':>9s} "
+                f"{'\u03c1\u1d65':>9s} "
+                f"{'\u03bc\u2097':>8s} "
+                f"{'\u03bc\u1d65':>8s}"
             )
             for step in r.steps[:80]:
                 z_two_phase = "" if step.z_two_phase is None else f"{step.z_two_phase:.5f}"
@@ -917,7 +945,7 @@ class TextOutputWidget(QWidget):
             lines.append("")
             lines.append(
                 f"{'Step':>4s} {'AddedGas':>10s} {'BubbleP':>14s} {'SwellFact':>10s} "
-                f"{'rhoL':>10s} {'Status':>24s}  Message"
+                f"{'\u03c1\u2097':>10s} {'Status':>24s}  Message"
             )
             for step in r.steps[:80]:
                 bubble_pressure = (
@@ -965,7 +993,16 @@ class TextOutputWidget(QWidget):
                 lines.append(f"Shrinkage = {r.shrinkage:.5f}")
             lines.append("")
             lines.append(
-                "Stage         P (bar)      T (K)    VaporFrac   LiquidMol    VaporMol      rhoL      rhoV       ZL       ZV"
+                f"{'Stage':<12s} "
+                f"{'P (bar)':>10s} "
+                f"{'T (K)':>10s} "
+                f"{'VaporFrac':>11s} "
+                f"{'LiquidMol':>11s} "
+                f"{'VaporMol':>11s} "
+                f"{'\u03c1\u2097':>9s} "
+                f"{'\u03c1\u1d65':>9s} "
+                f"{'Z\u2097':>8s} "
+                f"{'Z\u1d65':>8s}"
             )
             for stage in r.stages[:80]:
                 vapor_fraction = "" if stage.vapor_fraction is None else f"{stage.vapor_fraction:.5f}"
