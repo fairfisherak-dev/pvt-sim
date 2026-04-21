@@ -1186,6 +1186,24 @@ def _finite_or_none(value: float) -> Optional[float]:
     return as_float if np.isfinite(as_float) else None
 
 
+def _composition_array_to_dict(
+    component_ids: list[str], composition: np.ndarray | None
+) -> Optional[dict[str, float]]:
+    """Zip a per-component composition array into a {component_id: mole_fraction} dict.
+
+    Returns None when the array is missing, empty, wrong-length, or sums to zero
+    (e.g. the 'absent phase' placeholder used by single-phase steps).
+    """
+    if composition is None:
+        return None
+    arr = np.asarray(composition, dtype=float)
+    if arr.size == 0 or arr.size != len(component_ids):
+        return None
+    if not np.isfinite(arr).all() or float(arr.sum()) <= 0.0:
+        return None
+    return {cid: float(val) for cid, val in zip(component_ids, arr)}
+
+
 def _compute_pt_flash_phase_properties(
     pressure_pa: float,
     temperature_k: float,
@@ -2719,6 +2737,7 @@ def execute_cce(
         callback.on_progress(config.run_id or "", 0.2, "Setting up EOS...")
 
     prepared = prepared_fluid or _prepare_fluid_inputs(config)
+    component_ids = prepared.component_ids
     components = prepared.components
     z = prepared.composition
     eos = prepared.eos
@@ -2778,6 +2797,12 @@ def execute_cce(
                     binary_interaction,
                     "vapor",
                     step.vapor_composition,
+                ),
+                liquid_composition=_composition_array_to_dict(
+                    component_ids, step.liquid_composition
+                ),
+                vapor_composition=_composition_array_to_dict(
+                    component_ids, step.vapor_composition
                 ),
             )
         )
@@ -2948,6 +2973,7 @@ def execute_dl(
         callback.on_progress(config.run_id or "", 0.1, "Loading components...")
 
     prepared = prepared_fluid or _prepare_fluid_inputs(config)
+    component_ids = prepared.component_ids
     components = prepared.components
     z = prepared.composition
     eos = prepared.eos
@@ -3048,6 +3074,12 @@ def execute_dl(
                 ),
                 cumulative_gas_produced=_finite_or_none(step.cumulative_gas),
                 liquid_moles_remaining=_finite_or_none(step.liquid_moles_remaining),
+                liquid_composition=_composition_array_to_dict(
+                    component_ids, step.liquid_composition
+                ),
+                gas_composition=_composition_array_to_dict(
+                    component_ids, step.gas_composition
+                ),
             )
         )
         liquid_moles_remaining = _finite_or_none(step.liquid_moles_remaining)

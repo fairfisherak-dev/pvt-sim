@@ -98,6 +98,47 @@ def _swelling_units(config: Optional[SwellingTestConfig]) -> tuple[PressureUnit,
     return config.pressure_unit, config.temperature_unit
 
 
+def _format_per_step_composition_table(
+    *,
+    title: str,
+    steps,
+    pressure_unit: PressureUnit,
+    field: str,
+    max_steps: int = 40,
+) -> list[str]:
+    """Render a per-step composition sub-table for CCE/DL text output.
+
+    Rows are pressure steps; columns are components. Rows with missing or all-zero
+    compositions (e.g. the absent phase of a single-phase step) are omitted.
+    Returns [] when no step has any data in the requested field.
+    """
+    rows: list[tuple[float, dict[str, float]]] = []
+    component_ids: list[str] = []
+    for step in steps[:max_steps]:
+        comp = getattr(step, field, None)
+        if not comp:
+            continue
+        if not component_ids:
+            component_ids = list(comp.keys())
+        rows.append((step.pressure_pa, comp))
+    if not rows:
+        return []
+
+    header = f"P ({pressure_unit.value})".rjust(10) + "  " + "  ".join(
+        f"{cid:>10s}" for cid in component_ids
+    )
+    out = [title, header]
+    for p_pa, comp in rows:
+        pressure = pressure_from_pa(p_pa, pressure_unit)
+        cells = "  ".join(f"{comp.get(cid, 0.0):>10.6f}" for cid in component_ids)
+        out.append(f"{pressure:>10.3f}  {cells}")
+    omitted = len(steps) - len(rows)
+    if omitted > 0:
+        out.append(f"... ({omitted} step(s) omitted: single-phase or missing data)")
+    out.append("")
+    return out
+
+
 def format_eos_label(eos_type: EOSType) -> str:
     """Return the GUI-facing EOS label for reports and compact summaries."""
     return GUI_EOS_TYPE_LABELS.get(eos_type, eos_type.value.replace("_", " ").title())
@@ -657,6 +698,23 @@ class TextOutputWidget(QWidget):
                 lines.append(f"... ({len(r.steps) - 80} more)")
             lines.append("")
 
+            lines.extend(
+                _format_per_step_composition_table(
+                    title="Per-step liquid composition (x)",
+                    steps=r.steps,
+                    pressure_unit=pressure_unit,
+                    field="liquid_composition",
+                )
+            )
+            lines.extend(
+                _format_per_step_composition_table(
+                    title="Per-step vapor composition (y)",
+                    steps=r.steps,
+                    pressure_unit=pressure_unit,
+                    field="vapor_composition",
+                )
+            )
+
         elif result.dl_result is not None:
             r = result.dl_result
             pressure_unit, temperature_unit = _dl_units(cfg.dl_config)
@@ -664,7 +722,7 @@ class TextOutputWidget(QWidget):
             lines.append("-----------------------")
             lines.append(f"T = {_format_temperature(r.temperature_k, temperature_unit)}")
             lines.append(f"Pb = {_format_pressure(r.bubble_pressure_pa, pressure_unit)}")
-            lines.append(f"RsDi = {r.rsi:.5f}")
+            lines.append(f"RsDb = {r.rsi:.5f}")
             lines.append(f"Boi = {r.boi:.5f}")
             lines.append(
                 "Residual oil density = "
@@ -673,7 +731,7 @@ class TextOutputWidget(QWidget):
             lines.append(f"Converged: {r.converged}")
             lines.append("")
             lines.append(
-                f"P ({pressure_unit.value})        RsD       RsDi         Bo         Bg        BtD    CumGas   VaporFrac      rhoL    OilMu    GasSG     GasZ    GasMu"
+                f"P ({pressure_unit.value})        RsD       RsDb         Bo         Bg        BtD    CumGas   VaporFrac      rhoL    OilMu    GasSG     GasZ    GasMu"
             )
             for step in r.steps[:80]:
                 bg_txt = "-" if step.bg is None else f"{step.bg:.5f}"
@@ -701,6 +759,23 @@ class TextOutputWidget(QWidget):
             if len(r.steps) > 80:
                 lines.append(f"... ({len(r.steps) - 80} more)")
             lines.append("")
+
+            lines.extend(
+                _format_per_step_composition_table(
+                    title="Per-step residual-oil composition (x)",
+                    steps=r.steps,
+                    pressure_unit=pressure_unit,
+                    field="liquid_composition",
+                )
+            )
+            lines.extend(
+                _format_per_step_composition_table(
+                    title="Per-step liberated-gas composition (y)",
+                    steps=r.steps,
+                    pressure_unit=pressure_unit,
+                    field="gas_composition",
+                )
+            )
 
         elif result.cvd_result is not None:
             r = result.cvd_result

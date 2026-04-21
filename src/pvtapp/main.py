@@ -274,11 +274,6 @@ class PVTSimulatorWindow(QMainWindow):
         self.interaction_params_widget = InteractionParamsWidget(self._components_db)
         self.run_log_widget = RunLogWidget()
 
-        vapor_placeholder = QLabel("Vapor saturation view is not implemented yet.")
-        vapor_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        vapor_placeholder.setStyleSheet("color: #9ca3af;")
-        self.vapor_saturation_widget = vapor_placeholder
-
         view_specs = [
             ViewSpec("critical_props", "Critical prop."),
             ViewSpec("interaction_params", "Interaction para."),
@@ -286,7 +281,6 @@ class PVTSimulatorWindow(QMainWindow):
             ViewSpec("text_output", "Text output"),
             ViewSpec("phase_envelope", "Plot"),
             ViewSpec("diagnostics", "Diagnostics"),
-            ViewSpec("vapor_saturation", "Vapor saturation"),
         ]
 
         view_widgets = {
@@ -296,7 +290,6 @@ class PVTSimulatorWindow(QMainWindow):
             "text_output": self.text_output_widget,
             "phase_envelope": self.results_plot,
             "diagnostics": self.diagnostics_widget,
-            "vapor_saturation": self.vapor_saturation_widget,
         }
 
         self.workspace = TwoPaneWorkspace(
@@ -1128,7 +1121,7 @@ class PVTSimulatorWindow(QMainWindow):
                         [
                             "Pressure_bar",
                             "RsD",
-                            "RsDi",
+                            "RsDb",
                             "Bo",
                             "Bg",
                             "BtD",

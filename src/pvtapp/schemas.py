@@ -1600,6 +1600,8 @@ class CCEStepResult(BaseModel):
     vapor_density_kg_per_m3: Optional[float] = None
     liquid_viscosity_pa_s: Optional[float] = None
     vapor_viscosity_pa_s: Optional[float] = None
+    liquid_composition: Optional[Dict[str, float]] = None
+    vapor_composition: Optional[Dict[str, float]] = None
 
     @property
     def liquid_viscosity_cp(self) -> Optional[float]:
@@ -1730,6 +1732,8 @@ class DLStepResult(BaseModel):
     gas_viscosity_pa_s: Optional[float] = None
     cumulative_gas_produced: Optional[float] = None
     liquid_moles_remaining: Optional[float] = None
+    liquid_composition: Optional[Dict[str, float]] = None
+    gas_composition: Optional[Dict[str, float]] = None
 
     @property
     def oil_viscosity_cp(self) -> Optional[float]:
