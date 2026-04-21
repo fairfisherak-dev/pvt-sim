@@ -56,7 +56,7 @@ from pvtapp.schemas import (
     temperature_to_k,
 )
 from pvtapp.style import DEFAULT_UI_SCALE, scale_metric
-from pvtapp.widgets.combo_box import NoWheelComboBox, NoWheelSpinBox, NoWheelTabWidget
+from pvtapp.widgets.combo_box import CheckBox, NoWheelComboBox, NoWheelSpinBox, NoWheelTabWidget
 from pvtcore.models import resolve_component_id
 
 COMPONENT_DROPDOWN_BUTTON_WIDTH = 22
@@ -411,7 +411,7 @@ class CompositionInputWidget(QWidget):
         self.plus_pedersen_solve_ab_from = NoWheelComboBox()
         self.plus_pedersen_solve_ab_from.addItem("balances", "balances")
         self.plus_pedersen_solve_ab_from.addItem("fit_to_tbp", "fit_to_tbp")
-        self.plus_lumping_enabled = QCheckBox("Enable lumping")
+        self.plus_lumping_enabled = CheckBox("Enable lumping")
         self.plus_lumping_groups_spin = NoWheelSpinBox()
         self.plus_lumping_groups_spin.setRange(1, 200)
         self.plus_lumping_groups_spin.setValue(8)

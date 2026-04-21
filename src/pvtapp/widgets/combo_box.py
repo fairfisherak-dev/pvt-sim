@@ -5,8 +5,18 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import QPointF, Qt
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPolygonF
-from PySide6.QtWidgets import QComboBox, QDoubleSpinBox, QSpinBox, QTabBar, QTabWidget, QWidget
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDoubleSpinBox,
+    QSpinBox,
+    QStyle,
+    QStyleOptionButton,
+    QTabBar,
+    QTabWidget,
+    QWidget,
+)
 
 
 _ARROW_COLOR_DEFAULT = QColor("#e5e7eb")
@@ -145,6 +155,58 @@ class NoWheelDoubleSpinBox(QDoubleSpinBox, _NoWheelAbstractSpinBox):
     def paintEvent(self, event) -> None:  # pragma: no cover - visual-only
         super().paintEvent(event)
         self._paint_spin_arrows()
+
+
+class CheckBox(QCheckBox):
+    """QCheckBox that paints its own visible checkmark glyph.
+
+    Qt's default checkmark relies on QSS ``image: url(...)`` for the
+    ``::indicator:checked`` pseudo-state, which is not reliable on every
+    Windows style — the override leaves the checkbox looking like a flat
+    filled square with no actual check visible. Drawing the tick directly
+    in ``paintEvent`` is deterministic and always shows up.
+    """
+
+    def __init__(self, text: str = "", parent: Optional[QWidget] = None) -> None:
+        super().__init__(text, parent)
+
+    def paintEvent(self, event) -> None:  # pragma: no cover - visual-only
+        super().paintEvent(event)
+        if not self.isChecked() and self.checkState() != Qt.CheckState.PartiallyChecked:
+            return
+        opt = QStyleOptionButton()
+        self.initStyleOption(opt)
+        indicator_rect = self.style().subElementRect(
+            QStyle.SubElement.SE_CheckBoxIndicator, opt, self
+        )
+        painter = QPainter(self)
+        try:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            stroke = QColor("#ffffff") if self.isEnabled() else QColor("#9ca3af")
+            # Thicker stroke when the indicator is bigger so the tick stays
+            # legible at all UI scales.
+            stroke_width = max(1.6, indicator_rect.width() * 0.14)
+            pen = QPen(
+                stroke,
+                stroke_width,
+                Qt.PenStyle.SolidLine,
+                Qt.PenCapStyle.RoundCap,
+                Qt.PenJoinStyle.RoundJoin,
+            )
+            painter.setPen(pen)
+            x = float(indicator_rect.x())
+            y = float(indicator_rect.y())
+            w = float(indicator_rect.width())
+            h = float(indicator_rect.height())
+            # Classic three-point checkmark, anchored to indicator bounds
+            # with a small margin so it doesn't kiss the border.
+            path = QPainterPath()
+            path.moveTo(x + w * 0.22, y + h * 0.52)
+            path.lineTo(x + w * 0.43, y + h * 0.72)
+            path.lineTo(x + w * 0.80, y + h * 0.30)
+            painter.drawPath(path)
+        finally:
+            painter.end()
 
 
 class NoWheelTabBar(QTabBar):

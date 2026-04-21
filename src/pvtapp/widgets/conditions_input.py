@@ -71,6 +71,7 @@ from pvtapp.capabilities import (
 )
 from pvtapp.style import DEFAULT_UI_SCALE, scale_metric
 from pvtapp.widgets.combo_box import (
+    CheckBox,
     NoWheelComboBox,
     NoWheelDoubleSpinBox,
     NoWheelSpinBox,
@@ -489,7 +490,7 @@ class ConditionsInputWidget(QWidget):
         self.stability_feed_phase_combo.addItem("Vapor", StabilityFeedPhase.VAPOR)
         layout.addRow("Feed Phase:", self.stability_feed_phase_combo)
 
-        self.stability_use_gdem = QCheckBox("Enable GDEM acceleration")
+        self.stability_use_gdem = CheckBox("Enable GDEM acceleration")
         self.stability_use_gdem.setChecked(True)
         layout.addRow("Acceleration:", self.stability_use_gdem)
 
@@ -582,7 +583,7 @@ class ConditionsInputWidget(QWidget):
         self._configure_unit_row(t_layout, temperature, temperature_unit)
         layout.addRow("Temperature:", t_layout)
 
-        guess_enabled = QCheckBox("Use initial pressure guess")
+        guess_enabled = CheckBox("Use initial pressure guess")
         setattr(self, guess_enabled_attr, guess_enabled)
         guess_enabled.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         layout.addRow("Pressure Guess:", guess_enabled)
@@ -800,7 +801,7 @@ class ConditionsInputWidget(QWidget):
         reservoir_temperature_layout.addWidget(QLabel("F"))
         form_layout.addRow("Reservoir Temperature:", reservoir_temperature_layout)
 
-        self.separator_include_stock_tank = QCheckBox("Include stock-tank stage")
+        self.separator_include_stock_tank = CheckBox("Include stock-tank stage")
         self.separator_include_stock_tank.setChecked(True)
         form_layout.addRow("Stock Tank:", self.separator_include_stock_tank)
 
