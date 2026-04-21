@@ -484,11 +484,15 @@ class CompositionInputWidget(QWidget):
 
         inline_form.addRow("Label", self.inline_name_edit)
         inline_form.addRow("MW (g/mol)", self.inline_mw_edit)
-        # Use HTML rich text for critical-property labels so the c/b renders
+        # Use HTML rich text for critical-property labels so the c renders
         # as a proper subscript; Unicode has no dedicated subscript-c, and
-        # the inline form labels are plain QLabels which auto-detect HTML.
-        inline_form.addRow("T<sub>c</sub>", inline_tc_row)
-        inline_form.addRow("P<sub>c</sub>", inline_pc_row)
+        # the inline form labels are plain QLabels that auto-detect HTML.
+        # An inline ``font-size:90%`` on the <sub> keeps the descender
+        # character legible at small UI scales (Qt's default <sub> is
+        # ~62% which can become invisible at medium/small zoom).
+        _SUB_STYLE = "font-size:90%"
+        inline_form.addRow(f"T<sub style='{_SUB_STYLE}'>c</sub>", inline_tc_row)
+        inline_form.addRow(f"P<sub style='{_SUB_STYLE}'>c</sub>", inline_pc_row)
         inline_form.addRow("\u03c9", self.inline_omega_edit)
         self.heavy_tabs.addTab(inline_page, "Pseudo+")
 
