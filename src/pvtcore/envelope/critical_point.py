@@ -1,15 +1,14 @@
-"""Critical point detection for multicomponent mixtures.
+"""Critical-point helpers for multicomponent phase envelopes.
 
-Implements robust critical point detection using multiple strategies:
-1. Kay's mixing rule estimation with refinement
-2. K-value convergence detection (Ki → 1 for all components)
-3. Envelope curve intersection analysis
-4. Maximum pressure (cricondenbar) proximity
+Important contract:
+- the public phase-envelope critical-point surface must be **fail-closed**;
+- helper estimates may exist for future diagnostics or solver seeding, but they
+  must not be plotted as truth unless a stricter envelope-based certifier says a
+  critical point is actually resolved.
 
-The critical point is where:
-- Liquid and vapor phases become identical
-- All K-values equal unity simultaneously
-- Bubble and dew point curves meet
+In the current phase-1 implementation, the public `detect_critical_point(...)`
+path uses a strict hot-end envelope-closure contract rather than heuristic
+fallbacks such as mixing-rule, closest-approach, or cricondenbar proxies.
 
 References:
 - Michelsen, M.L. and Mollerup, J.M. (2007). "Thermodynamic Models:
@@ -146,141 +145,27 @@ def _k_value_deviation(K: NDArray[np.float64]) -> float:
     return float(np.max(np.abs(K - 1.0)))
 
 
-def find_critical_point_kvalue_search(
-    composition: NDArray[np.float64],
-    components: List[Component],
-    eos: CubicEOS,
-    binary_interaction: Optional[NDArray[np.float64]] = None,
-    T_initial: Optional[float] = None,
-    P_initial: Optional[float] = None,
-    max_iterations: int = MAX_CRITICAL_ITERATIONS,
-    tolerance: float = K_VALUE_TOLERANCE,
-) -> CriticalPointResult:
-    """Find critical point by searching for K-values approaching unity.
+def _sorted_curve_arrays(
+    temperatures: NDArray[np.float64],
+    pressures: NDArray[np.float64],
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Return one curve sorted in ascending temperature order."""
+    order = np.argsort(np.asarray(temperatures, dtype=np.float64))
+    temps = np.asarray(temperatures, dtype=np.float64)[order]
+    press = np.asarray(pressures, dtype=np.float64)[order]
+    return temps, press
 
-    At the critical point, all K-values (Ki = yi/xi) approach 1.0.
-    This method searches in (T, P) space to minimize max|Ki - 1|.
 
-    Parameters
-    ----------
-    composition : ndarray
-        Feed composition (mole fractions)
-    components : List[Component]
-        Component objects
-    eos : CubicEOS
-        Equation of state
-    binary_interaction : ndarray, optional
-        Binary interaction parameters
-    T_initial, P_initial : float, optional
-        Initial guesses. If None, uses Kay's mixing rules.
-    max_iterations : int
-        Maximum iterations for search
-    tolerance : float
-        Tolerance for K-value deviation from unity
+def _median_temperature_step(temperatures: NDArray[np.float64]) -> float:
+    """Return a representative positive ΔT for one traced branch."""
+    if len(temperatures) < 2:
+        return TEMPERATURE_STEP
+    diffs = np.diff(np.asarray(temperatures, dtype=np.float64))
+    positive = diffs[diffs > 1.0e-12]
+    if positive.size == 0:
+        return TEMPERATURE_STEP
+    return float(np.median(positive))
 
-    Returns
-    -------
-    CriticalPointResult
-        Critical point results
-    """
-    z = np.asarray(composition, dtype=np.float64)
-    z = z / z.sum()
-
-    # Initial guess from mixing rules
-    if T_initial is None or P_initial is None:
-        T_est, P_est = estimate_critical_point_kays(z, components)
-        if T_initial is None:
-            T_initial = T_est
-        if P_initial is None:
-            P_initial = P_est
-
-    T = float(T_initial)
-    P = float(P_initial)
-
-    # Physical bounds
-    T_min = min(comp.Tc for comp in components) * 0.5
-    T_max = max(comp.Tc for comp in components) * 1.5
-    P_min = 1e5  # 1 bar
-    P_max = max(comp.Pc for comp in components) * 2.0
-
-    best_T, best_P = T, P
-    best_deviation = float('inf')
-
-    # Use Wilson K-values for search (faster than full EOS K-values)
-    # At critical point, Wilson K-values also approach 1
-    for iteration in range(max_iterations):
-        # Clamp to physical bounds
-        T = max(T_min, min(T_max, T))
-        P = max(P_min, min(P_max, P))
-
-        try:
-            K = wilson_k_values(P, T, components)
-            deviation = _k_value_deviation(K)
-
-            if deviation < best_deviation:
-                best_deviation = deviation
-                best_T, best_P = T, P
-
-            if deviation < tolerance:
-                return CriticalPointResult(
-                    Tc=T,
-                    Pc=P,
-                    method="k_value_search",
-                    converged=True,
-                    iterations=iteration + 1,
-                    K_deviation=deviation,
-                )
-
-            # Gradient-based step: move toward K = 1
-            # dK/dT and dK/dP from Wilson correlation
-            dT = 0.5  # K
-            dP = P * 0.01  # 1% of P
-
-            K_plus_T = wilson_k_values(P, T + dT, components)
-            K_plus_P = wilson_k_values(P + dP, T, components)
-
-            dev_plus_T = _k_value_deviation(K_plus_T)
-            dev_plus_P = _k_value_deviation(K_plus_P)
-
-            # Simple gradient descent
-            grad_T = (dev_plus_T - deviation) / dT
-            grad_P = (dev_plus_P - deviation) / dP
-
-            # Adaptive step size
-            step_T = -grad_T * 20.0  # Scale factor
-            step_P = -grad_P * P * 0.5
-
-            # Limit step sizes
-            step_T = max(-50.0, min(50.0, step_T))
-            step_P = max(-P * 0.3, min(P * 0.3, step_P))
-
-            T += step_T
-            P += step_P
-
-        except Exception:
-            # Numerical issue, try smaller step
-            T = best_T + np.random.uniform(-5, 5)
-            P = best_P * (1.0 + np.random.uniform(-0.1, 0.1))
-
-    # Return best found even if not converged
-    if best_deviation < tolerance * 5:  # Allow looser tolerance
-        return CriticalPointResult(
-            Tc=best_T,
-            Pc=best_P,
-            method="k_value_search",
-            converged=True,
-            iterations=max_iterations,
-            K_deviation=best_deviation,
-        )
-
-    return CriticalPointResult(
-        Tc=None,
-        Pc=None,
-        method="k_value_search",
-        converged=False,
-        iterations=max_iterations,
-        K_deviation=best_deviation,
-    )
 
 
 def find_critical_from_envelope(
@@ -292,149 +177,133 @@ def find_critical_from_envelope(
     components: List[Component],
     tolerance: float = PRESSURE_MATCH_TOLERANCE,
 ) -> CriticalPointResult:
-    """Find critical point from envelope curves using multiple strategies.
+    """Find a critical point only from a strict hot-end branch closure.
 
-    Strategies:
-    1. Maximum pressure point (cricondenbar) - often at or near critical
-    2. Curve intersection where |P_bubble - P_dew| < tolerance
-    3. Point where bubble and dew curves approach each other most closely
-
-    Parameters
-    ----------
-    bubble_T, bubble_P : ndarray
-        Bubble curve points (T in K, P in Pa)
-    dew_T, dew_P : ndarray
-        Dew curve points (T in K, P in Pa)
-    composition : ndarray
-        Mole fractions
-    components : List[Component]
-        Component objects
-    tolerance : float
-        Pressure matching tolerance (Pa)
-
-    Returns
-    -------
-    CriticalPointResult
-        Critical point results
+    This deliberately avoids heuristic fallbacks such as mixing-rule estimates,
+    closest-approach guesses, cricondenbar proxies, or Wilson-K pseudo-critical
+    searches. A critical point is returned only when the traced bubble and dew
+    branches demonstrably meet at the hot end of their common temperature window.
+    Otherwise the function fails closed.
     """
+    _ = composition, components  # kept for API compatibility / future strict checks
+
     if len(bubble_P) == 0 or len(dew_P) == 0:
         return CriticalPointResult(
-            Tc=None, Pc=None, method="envelope_curves",
+            Tc=None, Pc=None, method="strict_envelope_intersection",
             converged=False, iterations=0, K_deviation=None,
         )
 
-    # Get physical bounds from pure component critical points
-    z = np.asarray(composition, dtype=np.float64)
-    z = z / z.sum()
+    Tb_sorted, Pb_sorted = _sorted_curve_arrays(bubble_T, bubble_P)
+    Td_sorted, Pd_sorted = _sorted_curve_arrays(dew_T, dew_P)
 
-    Tc_min = min(comp.Tc for i, comp in enumerate(components) if z[i] > 1e-10)
-    Tc_max = max(comp.Tc for i, comp in enumerate(components) if z[i] > 1e-10)
-
-    # Kay's estimate as reference
-    Tc_kay, Pc_kay = estimate_critical_point_kays(z, components)
-
-    # Strategy 1: Maximum pressure point (cricondenbar)
-    # The critical point is typically at or very near the maximum pressure
-    all_P = np.concatenate([bubble_P, dew_P])
-    all_T = np.concatenate([bubble_T, dew_T])
-
-    idx_max_P = int(np.argmax(all_P))
-    T_cricondenbar = float(all_T[idx_max_P])
-    P_cricondenbar = float(all_P[idx_max_P])
-
-    # Strategy 2: Find intersection of bubble and dew curves
-    # Sort arrays by temperature for interpolation
-    b_sort = np.argsort(bubble_T)
-    d_sort = np.argsort(dew_T)
-    Tb_sorted = bubble_T[b_sort]
-    Pb_sorted = bubble_P[b_sort]
-    Td_sorted = dew_T[d_sort]
-    Pd_sorted = dew_P[d_sort]
-
-    # Find overlapping temperature range
     T_overlap_min = max(float(np.min(Tb_sorted)), float(np.min(Td_sorted)))
     T_overlap_max = min(float(np.max(Tb_sorted)), float(np.max(Td_sorted)))
-
-    best_intersection_T = None
-    best_intersection_P = None
-    min_pressure_diff = float('inf')
-
-    if T_overlap_max > T_overlap_min:
-        # Sample temperatures in overlap region
-        T_samples = np.linspace(T_overlap_min, T_overlap_max, 500)
-
-        for T in T_samples:
-            # Interpolate pressures
-            Pb_interp = np.interp(T, Tb_sorted, Pb_sorted)
-            Pd_interp = np.interp(T, Td_sorted, Pd_sorted)
-
-            pressure_diff = abs(Pb_interp - Pd_interp)
-
-            # Track best intersection
-            if pressure_diff < min_pressure_diff:
-                # Validate: T should be in reasonable range for mixture
-                if Tc_min * 0.8 < T < Tc_max * 1.3:
-                    min_pressure_diff = pressure_diff
-                    best_intersection_T = float(T)
-                    best_intersection_P = float(0.5 * (Pb_interp + Pd_interp))
-
-    # Strategy 3: Find where curves are closest (minimum distance)
-    min_distance = float('inf')
-    closest_T = None
-    closest_P = None
-
-    for i, (tb, pb) in enumerate(zip(bubble_T, bubble_P)):
-        for j, (td, pd) in enumerate(zip(dew_T, dew_P)):
-            # Distance metric in normalized (T, P) space
-            dT_norm = (tb - td) / Tc_kay
-            dP_norm = (pb - pd) / Pc_kay
-            distance = math.sqrt(dT_norm**2 + dP_norm**2)
-
-            if distance < min_distance:
-                # Validate: should be at reasonable T
-                avg_T = 0.5 * (tb + td)
-                if Tc_min * 0.8 < avg_T < Tc_max * 1.3:
-                    min_distance = distance
-                    closest_T = float(avg_T)
-                    closest_P = float(0.5 * (pb + pd))
-
-    # Select best result
-    candidates = []
-
-    # Candidate 1: Cricondenbar (if in reasonable T range)
-    if Tc_min * 0.7 < T_cricondenbar < Tc_max * 1.4:
-        candidates.append((T_cricondenbar, P_cricondenbar, "cricondenbar", 0.0))
-
-    # Candidate 2: Intersection point
-    if best_intersection_T is not None and min_pressure_diff < tolerance:
-        candidates.append((best_intersection_T, best_intersection_P,
-                          "intersection", min_pressure_diff))
-
-    # Candidate 3: Closest approach (if curves are close)
-    if closest_T is not None and min_distance < 0.1:  # Normalized distance
-        candidates.append((closest_T, closest_P, "closest_approach",
-                          min_distance * Pc_kay))  # Convert back to Pa
-
-    if not candidates:
+    if T_overlap_max <= T_overlap_min:
         return CriticalPointResult(
-            Tc=None, Pc=None, method="envelope_curves",
+            Tc=None, Pc=None, method="strict_envelope_intersection",
             converged=False, iterations=0, K_deviation=None,
         )
 
-    # Prefer intersection method if available, otherwise cricondenbar
-    for T, P, method, _ in candidates:
-        if method == "intersection":
-            return CriticalPointResult(
-                Tc=T, Pc=P, method=f"envelope_{method}",
-                converged=True, iterations=1, K_deviation=None,
-            )
-
-    # Fall back to cricondenbar or closest approach
-    T, P, method, _ = candidates[0]
-    return CriticalPointResult(
-        Tc=T, Pc=P, method=f"envelope_{method}",
-        converged=True, iterations=1, K_deviation=None,
+    bubble_mask = (Tb_sorted >= T_overlap_min) & (Tb_sorted <= T_overlap_max)
+    dew_mask = (Td_sorted >= T_overlap_min) & (Td_sorted <= T_overlap_max)
+    candidate_temperatures = np.unique(
+        np.concatenate([
+            Tb_sorted[bubble_mask],
+            Td_sorted[dew_mask],
+        ])
     )
+    if candidate_temperatures.size == 0:
+        return CriticalPointResult(
+            Tc=None, Pc=None, method="strict_envelope_intersection",
+            converged=False, iterations=0, K_deviation=None,
+        )
+
+    Pb_interp = np.interp(candidate_temperatures, Tb_sorted, Pb_sorted)
+    Pd_interp = np.interp(candidate_temperatures, Td_sorted, Pd_sorted)
+    pressure_gap = np.abs(Pb_interp - Pd_interp)
+    meeting = pressure_gap <= float(tolerance)
+    if not np.any(meeting):
+        return CriticalPointResult(
+            Tc=None, Pc=None, method="strict_envelope_intersection",
+            converged=False, iterations=1, K_deviation=None,
+        )
+
+    Tc_candidates = candidate_temperatures[meeting]
+    Pb_candidates = Pb_interp[meeting]
+    Pd_candidates = Pd_interp[meeting]
+    idx_hot = int(np.argmax(Tc_candidates))
+    Tcrit = float(Tc_candidates[idx_hot])
+    Pcrit = float(0.5 * (Pb_candidates[idx_hot] + Pd_candidates[idx_hot]))
+
+    span = max(T_overlap_max - T_overlap_min, 0.0)
+    hot_step_scale = max(
+        _median_temperature_step(Tb_sorted[bubble_mask]),
+        _median_temperature_step(Td_sorted[dew_mask]),
+        TEMPERATURE_STEP,
+    )
+    hot_gap_allowance = max(1.5 * hot_step_scale, 0.03 * span, 2.0)
+    if (T_overlap_max - Tcrit) > hot_gap_allowance:
+        return CriticalPointResult(
+            Tc=None, Pc=None, method="strict_envelope_intersection",
+            converged=False, iterations=1, K_deviation=None,
+        )
+
+    return CriticalPointResult(
+        Tc=Tcrit,
+        Pc=Pcrit,
+        method="strict_envelope_intersection",
+        converged=True,
+        iterations=1,
+        K_deviation=None,
+    )
+
+
+def _validate_hk_against_trace(
+    hk_Tc: float,
+    hk_Pc: float,
+    bubble_T: NDArray[np.float64],
+    bubble_P: NDArray[np.float64],
+    dew_T: NDArray[np.float64],
+    dew_P: NDArray[np.float64],
+) -> bool:
+    """Return True iff H-K's (Tc, Pc) is visually consistent with the traced envelope.
+
+    Rejects results where the bubble and dew branches haven't converged toward
+    the reported critical point. This prevents plotting a free-floating
+    "critical" marker on an envelope whose branches never close.
+    """
+    Tb = np.asarray(bubble_T, dtype=np.float64)
+    Pb = np.asarray(bubble_P, dtype=np.float64)
+    Td = np.asarray(dew_T, dtype=np.float64)
+    Pd = np.asarray(dew_P, dtype=np.float64)
+    if Tb.size == 0 or Td.size == 0:
+        return False
+
+    Tb_max, Td_max = float(np.max(Tb)), float(np.max(Td))
+    step = max(
+        _median_temperature_step(Tb),
+        _median_temperature_step(Td),
+        TEMPERATURE_STEP,
+    )
+    reach_window = max(3.0 * step, 10.0)  # K
+    if (hk_Tc - Tb_max) > reach_window or (hk_Tc - Td_max) > reach_window:
+        return False
+
+    Tb_sorted, Pb_sorted = _sorted_curve_arrays(Tb, Pb)
+    Td_sorted, Pd_sorted = _sorted_curve_arrays(Td, Pd)
+    T_eval = min(hk_Tc, Tb_max, Td_max)
+    Pb_at = float(np.interp(T_eval, Tb_sorted, Pb_sorted))
+    Pd_at = float(np.interp(T_eval, Td_sorted, Pd_sorted))
+    P_gap = abs(Pb_at - Pd_at)
+    P_scale = max(abs(hk_Pc), 1e5)
+    if P_gap > 0.20 * P_scale:
+        return False
+
+    P_mid = 0.5 * (Pb_at + Pd_at)
+    if abs(hk_Pc - P_mid) > 0.25 * P_scale:
+        return False
+
+    return True
 
 
 def detect_critical_point(
@@ -447,120 +316,57 @@ def detect_critical_point(
     eos: Optional[CubicEOS] = None,
     binary_interaction: Optional[NDArray[np.float64]] = None,
 ) -> Tuple[Optional[float], Optional[float]]:
-    """Detect critical point using multiple strategies with physical validation.
+    """Detect the mixture critical point.
 
-    This is the main entry point for critical point detection. It combines
-    multiple detection strategies and validates results against physical bounds.
+    Primary path is the Heidemann-Khalil thermodynamic solver (needs only
+    z, components, and the EOS — no reliance on the envelope trace). The
+    traced branches are used only to seed (T, V): if the bubble/dew branches
+    meet on their hot end, that meeting point becomes the H-K seed.
 
-    Strategies used (in order of preference):
-    1. K-value search (most physically rigorous - finds where Ki → 1)
-    2. Envelope curve intersection (when curves meet properly)
-    3. Kay's mixing rule estimate (fallback)
+    After H-K converges, the result is validated against the traced branches
+    via `_validate_hk_against_trace`. If the branches haven't reached H-K's
+    (Tc, Pc) — as happens when the tracer terminates before closure on
+    asymmetric mixtures — the H-K result is rejected to keep the public
+    surface fail-closed and avoid plotting a disconnected critical marker.
 
-    Parameters
-    ----------
-    bubble_T, bubble_P : ndarray
-        Bubble curve points (T in K, P in Pa)
-    dew_T, dew_P : ndarray
-        Dew curve points (T in K, P in Pa)
-    composition : ndarray
-        Mole fractions
-    components : List[Component]
-        Component objects with Tc, Pc properties
-    eos : CubicEOS, optional
-        Equation of state for K-value refinement
-    binary_interaction : ndarray, optional
-        Binary interaction parameters
-
-    Returns
-    -------
-    Tuple[Optional[float], Optional[float]]
-        (Tc, Pc) or (None, None) if detection fails
+    Fallback path is strict envelope-closure — used only when the H-K
+    iteration fails, the EOS is not supplied, or H-K fails validation.
+    If all paths fail, return (None, None).
     """
-    z = np.asarray(composition, dtype=np.float64)
-    z = z / z.sum()
+    if eos is not None:
+        from .hk_critical import compute_critical_point
 
-    # Physical bounds from pure components
-    active_comps = [(i, comp) for i, comp in enumerate(components) if z[i] > 1e-10]
-
-    if not active_comps:
-        return None, None
-
-    Tc_min = min(comp.Tc for _, comp in active_comps)
-    Tc_max = max(comp.Tc for _, comp in active_comps)
-    Pc_min = min(comp.Pc for _, comp in active_comps)
-    Pc_max = max(comp.Pc for _, comp in active_comps)
-
-    # Get mixing rule estimates as reference
-    Tc_kay, Pc_kay = estimate_critical_point_kays(z, components)
-
-    try:
-        Tc_li, Pc_li = estimate_critical_point_li(z, components)
-    except Exception:
-        Tc_li, Pc_li = Tc_kay, Pc_kay
-
-    # Best estimate is average of Kay's and Li's
-    Tc_est = 0.5 * (Tc_kay + Tc_li)
-    Pc_est = 0.5 * (Pc_kay + Pc_li)
-
-    candidates = []
-
-    # Strategy 1: K-value search (most physically rigorous)
-    # At critical point, Wilson K-values approach unity
-    result_kvalue = None
-    try:
-        result_kvalue = find_critical_point_kvalue_search(
-            z, components, eos if eos is not None else None, binary_interaction,
-            T_initial=Tc_est, P_initial=Pc_est,
-            max_iterations=100,
-            tolerance=K_VALUE_TOLERANCE,
+        T_seed: Optional[float] = None
+        seed_result = find_critical_from_envelope(
+            bubble_T, bubble_P, dew_T, dew_P, composition, components,
         )
-        if result_kvalue.converged and result_kvalue.Tc is not None:
-            Tc, Pc = result_kvalue.Tc, result_kvalue.Pc
-            # Validate: must be between pure component criticals and close to estimate
-            T_dev = abs(Tc - Tc_est) / Tc_est
-            P_dev = abs(Pc - Pc_est) / Pc_est
-            if (Tc_min * 0.8 < Tc < Tc_max * 1.2 and
-                Pc_min * 0.5 < Pc < Pc_max * 1.5 and
-                T_dev < 0.3 and P_dev < 0.5):
-                candidates.append((Tc, Pc, "kvalue", result_kvalue.K_deviation or 0.0))
-    except Exception:
-        pass
+        if seed_result.converged and seed_result.Tc is not None:
+            T_seed = float(seed_result.Tc)
 
-    # Strategy 2: Envelope curve intersection
+        try:
+            hk = compute_critical_point(
+                composition, components, eos,
+                binary_interaction=binary_interaction,
+                T_init=T_seed,
+            )
+        except Exception:
+            hk = None
+
+        if (
+            hk is not None
+            and hk.converged
+            and hk.Tc is not None
+            and hk.Pc is not None
+            and _validate_hk_against_trace(
+                float(hk.Tc), float(hk.Pc),
+                bubble_T, bubble_P, dew_T, dew_P,
+            )
+        ):
+            return float(hk.Tc), float(hk.Pc)
+
     result_envelope = find_critical_from_envelope(
-        bubble_T, bubble_P, dew_T, dew_P, z, components
+        bubble_T, bubble_P, dew_T, dew_P, composition, components,
     )
-    if result_envelope.converged and result_envelope.Tc is not None:
-        Tc, Pc = result_envelope.Tc, result_envelope.Pc
-        T_dev = abs(Tc - Tc_est) / Tc_est
-        P_dev = abs(Pc - Pc_est) / Pc_est
-        # Only accept envelope result if it's reasonably close to mixing rule estimate
-        if (Tc_min * 0.8 < Tc < Tc_max * 1.2 and
-            Pc_min * 0.5 < Pc < Pc_max * 1.5 and
-            T_dev < 0.4 and P_dev < 0.6):
-            # Prefer intersection over cricondenbar
-            if "intersection" in result_envelope.method:
-                candidates.insert(0, (Tc, Pc, "envelope_intersection", 0.0))
-            else:
-                candidates.append((Tc, Pc, "envelope_other", 0.0))
-
-    # Strategy 3: Use mixing rule estimate as fallback
-    if Tc_min * 0.8 < Tc_est < Tc_max * 1.2:
-        candidates.append((Tc_est, Pc_est, "mixing_rule", 0.0))
-
-    if not candidates:
+    if not result_envelope.converged or result_envelope.Tc is None or result_envelope.Pc is None:
         return None, None
-
-    # Prefer K-value search (most physically rigorous)
-    for Tc, Pc, method, _ in candidates:
-        if method == "kvalue":
-            return Tc, Pc
-
-    # Then intersection
-    for Tc, Pc, method, _ in candidates:
-        if method == "envelope_intersection":
-            return Tc, Pc
-
-    # Fall back to best available
-    return candidates[0][0], candidates[0][1]
+    return float(result_envelope.Tc), float(result_envelope.Pc)

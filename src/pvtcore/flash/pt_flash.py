@@ -1,7 +1,9 @@
-"""Pressure-Temperature flash calculation using successive substitution.
+"""Pressure-Temperature flash for vapor–liquid equilibrium.
 
-PT flash calculates vapor-liquid equilibrium at specified pressure and
-temperature using an iterative successive substitution algorithm.
+Two-phase solves try a **Newton** formulation first (`newton_pt_flash`), then
+fall back to **successive substitution** if Newton does not converge — see
+``pt_flash`` below. Single-phase branches use stability + fugacity comparisons
+as before.
 
 Reference:
 Michelsen, M. L. and Mollerup, J. M., "Thermodynamic Models: Fundamentals &

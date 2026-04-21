@@ -137,8 +137,8 @@ class _StaticPane(QFrame):
         self._hosted_widget = widget
 
         self._outer = QVBoxLayout(self)
-        self._outer.setContentsMargins(12, 12, 12, 12)
-        self._outer.setSpacing(10)
+        self._outer.setContentsMargins(8, 8, 8, 8)
+        self._outer.setSpacing(6)
 
         self._title_label = QLabel(title)
         self._title_label.setObjectName("PaneTitle")
@@ -159,8 +159,8 @@ class _StaticPane(QFrame):
         self._title_label.setText(title)
 
     def apply_ui_scale(self, scale: float) -> None:
-        self._outer.setContentsMargins(*([scale_metric(12, scale, reference_scale=DEFAULT_UI_SCALE)] * 4))
-        self._outer.setSpacing(scale_metric(10, scale, reference_scale=DEFAULT_UI_SCALE))
+        self._outer.setContentsMargins(*([scale_metric(8, scale, reference_scale=DEFAULT_UI_SCALE)] * 4))
+        self._outer.setSpacing(scale_metric(6, scale, reference_scale=DEFAULT_UI_SCALE))
         if hasattr(self._hosted_widget, "apply_ui_scale"):
             self._hosted_widget.apply_ui_scale(scale)
 

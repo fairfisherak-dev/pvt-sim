@@ -121,6 +121,40 @@ Install surfaces currently defined:
 - full desktop + developer/validation surface: `pip install -e .[full,dev]`
 - docs: `pip install -e .[docs]`
 
+Environment-file contract:
+
+- tracked repo-safe defaults live in `.env.defaults`
+- ignored machine-local overrides live in `.env`
+- editor/runtime defaults should point at `.env.defaults`, not `.env`
+- do not rely on a tracked `.env` for canonical repo behavior
+
+## Local Environment Setup
+
+Recommended local Windows setup:
+
+```powershell
+python.exe -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python.exe -m pip install -U pip
+python.exe -m pip install -e .[full,dev]
+```
+
+Environment rules:
+
+- `.env.defaults` is the tracked baseline. Only repo-safe, non-secret defaults
+  belong there.
+- `.env` remains ignored and is reserved for machine-local overrides or
+  secrets.
+- If a setting is required for everyone, add it to `.env.defaults` and
+  document it here. Do not rely on `.env` as canonical repo state.
+- Keep the editor/interpreter pointed at `.venv\Scripts\python.exe` and
+  `python.envFile=${workspaceFolder}/.env.defaults`.
+- Cursor and VS Code should inherit the repo default from
+  `.vscode/settings.json`; do not switch the shared setting back to `.env`.
+- Cursor MCP servers are machine-local. Copy `.cursor/mcp.json.example` to
+  `.cursor/mcp.json`, edit the local Python/server paths, and keep
+  `.cursor/mcp.json` uncommitted.
+
 ---
 
 ## Coding Conventions
@@ -180,10 +214,13 @@ confused:
 
 Current verification surfaces:
 
-- `python .\scripts\validate_modules.py`
-- `pytest` for the default high-signal kernel/runtime surface
+- **CI (`.github/workflows/ci.yml`)** — `python scripts/run_premerge_checks.py --baseline-only`, then routine `pytest`, plus a parallel `python -m build` job. The baseline script is the only place the “smoke” file list and example CLI runs should be defined.
+- **Integration-root / merge gate (`--baseline-only` / `--integration-root`)** — **not** a minimal vanity check: it includes full `tests/unit/test_flash.py`, workflow + CLI + invariant tests, `validate_modules.py`, and canonical example validate/run steps. It is meant to be **firm on regressions** before absorb. Routine `pytest` afterward still runs the full headless suite. **Merge conflicts** must be resolved by **combining** the intended behavior from both sides (preserve features, no silent deletion); tests validate the result — they do not perform the merge.
+- `pytest` for the default routine headless kernel/runtime surface
+- `python .\scripts\run_premerge_checks.py` for the full lane/worktree gate (baseline + touched-surface add-ons)
+- `python .\scripts\run_full_validation.py` for the long-form validation lane
 - `pytest --run-gui-contracts` for optional desktop layout/style contract checks
-- `pvtsim validate <config>`
+- `pvtsim validate <config>` for ad hoc configs
 - manual CLI/GUI validation against literature data, MI PVT, lab reports, and
   physical invariants
 
@@ -191,7 +228,54 @@ Current verification surfaces:
 the validation plan and external reference cases when judging whether the
 simulator is actually right.
 
-The default `pytest` path intentionally deselects tests marked `gui_contract`.
-Those checks cover desktop layout, styling, zoom, and other presentation
-contracts that are useful when changing the GUI shell but are lower signal than
-kernel correctness and runtime-surface wiring for routine verification.
+The default `pytest` path intentionally keeps the routine surface narrow:
+
+- it only collects `tests/unit` plus `tests/contracts/test_invariants.py`
+- it deselects tests marked `gui_contract`
+- it deselects tests marked `nightly`
+
+That keeps the default regression lane aligned with everyday work while the
+longer validation and robustness surfaces stay explicit.
+
+### Due-date posture (small edits, no accidental loss)
+
+For the last stretch of a project, prioritize **not losing work** over perfect
+process: commit or stash before edits, skim **diffs for unintended deletions**
+before merging worktrees, and use **`python scripts/run_premerge_checks.py --baseline-only`**
+when folding a lane into the integration root. The **full** routine `pytest` run
+is still the broad regression net — if it feels too slow, **profile** instead of
+rerunning blindly:
+
+```bash
+python -m pytest tests/unit tests/contracts/test_invariants.py --durations=40 -q --tb=no
+```
+
+At the end, pytest prints the **slowest** tests; that tells you what dominates
+wall time (often a few large `pvtapp` runtime tests or envelope cases), not
+whether the suite is “hung.”
+
+### Merge / absorb reconciliation gate
+
+For any integration-root absorb or other `main`-affecting Git operation, the
+standard is semantic preservation, not mechanical cleanliness.
+
+Minimum required pass before calling a merge or absorb reconciled:
+
+1. Inventory what each side owns across shared runtime surfaces, GUI/app
+   behavior, schemas/contracts, tests, validation assets, scripts/docs, and
+   tracked config/env files.
+2. Confirm the merged outcome preserves the intended union of load-bearing
+   behavior, or record an explicit retirement approval for anything removed.
+3. Run targeted verification for the overlapping surface. For
+   thermo/numerical work, this means comparison against the prior validated
+   surface or equation/reference checks, not only import or smoke success.
+4. Report reconciliation level `R0` through `R4`, preserved/retired surfaces,
+   verification run, and residual risk.
+
+Additional rules:
+
+- Do not take `ours` or `theirs` wholesale on a shared surface unless a
+  deliberate rollback/retirement is explicitly approved.
+- Silence is not retirement.
+- A clean working tree or conflict-free merge is only `R1` mechanical work
+  until the accounting and targeted verification above are done.

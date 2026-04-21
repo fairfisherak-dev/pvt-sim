@@ -61,6 +61,7 @@ from pvtapp.widgets import (
     TwoPaneWorkspace,
     ViewSpec,
 )
+from pvtapp.widgets.two_pane_workspace import PANE_MODE_DOUBLE
 from pvtapp.workers import CalculationThread
 from pvtapp.job_runner import execute_bubble_point, load_run_config
 from pvtapp.style import (
@@ -1425,6 +1426,10 @@ class PVTSimulatorWindow(QMainWindow):
         except Exception:
             pass
 
+        # Phase envelope: show the Plot view (phase_envelope) on the primary center pane.
+        if result.status == RunStatus.COMPLETED and result.phase_envelope_result is not None:
+            self._show_phase_envelope_plot_pane()
+
         # Update status
         if result.status == RunStatus.COMPLETED:
             self._set_status_message(
@@ -1446,6 +1451,21 @@ class PVTSimulatorWindow(QMainWindow):
             f"Calculation failed:\n\n{error_message}"
         )
         self._set_status_message("Calculation failed")
+
+    def _show_phase_envelope_plot_pane(self) -> None:
+        """Focus the primary center pane on Plot (phase envelope) after a completed run.
+
+        Default layout is text on the primary pane and Plot on the secondary. In double
+        pane mode, ``_sync_disabled_items`` hides Plot on the primary while the
+        secondary shows it, so we must move the secondary off Plot before selecting Plot
+        on the primary.
+        """
+        ws = self.workspace
+        if ws.left_pane.current_view_id == "phase_envelope":
+            return
+        if ws.pane_mode == PANE_MODE_DOUBLE and ws.right_pane.current_view_id == "phase_envelope":
+            ws.right_pane.set_current_view("text_output")
+        ws.left_pane.set_current_view("phase_envelope")
 
     def _set_running_state(self, running: bool) -> None:
         """Update UI for running/idle state."""

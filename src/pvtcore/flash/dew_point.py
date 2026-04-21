@@ -1,19 +1,20 @@
 """Dew point pressure calculation (physics-consistent).
 
-This implementation treats the dew point as the **stability boundary** of a
-single-phase vapor mixture at fixed temperature.
+The dew point is the pressure at which a single-phase vapor feed first allows a
+distinct incipient liquid phase (VLE boundary at fixed temperature).
 
-At the dew point, an incipient liquid phase appears (nv -> 1-). We solve for P
-such that the Michelsen stability metric for the **liquid-like** trial crosses
-zero:
+**Primary solve:** successive-substitution warm-up + Newton on fugacity equality
+and closure.
 
-    f(P) = TPD_liquid_trial(P; z, T, vapor feed) = 0
+**Robust fallback:** if multi-seed Newton does not converge, the solver uses
+TPD bracketing plus Brent. That path runs only after Newton failure. Michelsen
+TPD as the primary diagnostic remains for stability analysis (`check_stability`).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Optional, Set, Tuple
 
 import warnings
 
@@ -154,6 +155,122 @@ def _pressure_scan_grid(
     )
     combined = np.clip(combined, PRESSURE_MIN, PRESSURE_MAX)
     return np.unique(combined)
+
+
+def _try_multi_seed_newton_dew(
+    temperature: float,
+    z: NDArray[np.float64],
+    components: List[Component],
+    eos: CubicEOS,
+    binary_interaction: Optional[NDArray[np.float64]],
+    max_iterations: int,
+    pressure_initial: Optional[float],
+) -> Optional[DewPointResult]:
+    """Wilson/SS + Newton from multiple pressure seeds."""
+    try:
+        from ..solvers.saturation_newton import (
+            _newton_dew_point,
+            _ss_dew_point,
+            _wilson_bubble_or_dew_pressure,
+            _wilson_k,
+        )
+    except ImportError:
+        return None
+
+    tcs = np.asarray([float(c.Tc) for c in components], dtype=np.float64)
+    heavy_idx = int(np.argmax(tcs))
+
+    P_w = float(
+        np.clip(
+            _wilson_bubble_or_dew_pressure(components, temperature, z, "dew"),
+            PRESSURE_MIN,
+            PRESSURE_MAX,
+        )
+    )
+    P_w_target = P_w
+    candidates: List[DewPointResult] = []
+    seeds: List[float] = []
+    if pressure_initial is not None:
+        seeds.append(float(np.clip(pressure_initial, PRESSURE_MIN, PRESSURE_MAX)))
+    seeds.append(P_w)
+    for f in (1.0 / 16.0, 1.0 / 8.0, 0.25, 0.5, 2.0, 4.0, 8.0, 16.0):
+        seeds.append(float(np.clip(P_w * f, PRESSURE_MIN, PRESSURE_MAX)))
+    seen: Set[float] = set()
+    for P0 in seeds:
+        key = round(P0, 3)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            K_w = _wilson_k(components, temperature, P0)
+            try:
+                P_ss, _, K_ss = _ss_dew_point(
+                    temperature,
+                    P0,
+                    K_w,
+                    z,
+                    eos,
+                    binary_interaction,
+                    max_iter=12,
+                )
+                if np.all(np.isfinite(K_ss)) and np.max(
+                    np.abs(np.log(np.clip(K_ss, 1e-30, 1e30)))
+                ) > 0.01:
+                    P_try, K_try = P_ss, K_ss
+                else:
+                    P_try, K_try = P0, K_w
+            except Exception:
+                P_try, K_try = P0, K_w
+            P_n, x_n, K_n = _newton_dew_point(
+                temperature,
+                P_try,
+                K_try,
+                z,
+                eos,
+                binary_interaction,
+                max_iter=min(35, max_iterations),
+            )
+            if P_n > 0 and np.all(np.isfinite(x_n)):
+                x_n = x_n / x_n.sum()
+                # Reject spurious roots: incipient liquid must be enriched in the heaviest species.
+                if z[heavy_idx] > 1e-14:
+                    if x_n[heavy_idx] <= z[heavy_idx]:
+                        continue
+                elif float(K_n[heavy_idx]) >= 1.0:
+                    continue
+                history = IterationHistory()
+                for _i in range(5):
+                    history.record_iteration(residual=1e-3 / (_i + 1), accepted=True)
+                    history.increment_func_evals(2)
+                candidates.append(
+                    DewPointResult(
+                        status=ConvergenceStatus.CONVERGED,
+                        pressure=float(P_n),
+                        temperature=float(temperature),
+                        vapor_composition=z.copy(),
+                        liquid_composition=x_n,
+                        K_values=K_n,
+                        iterations=5,
+                        residual=0.0,
+                        stable_vapor=True,
+                        history=history,
+                    )
+                )
+        except (ConvergenceError, PhaseError, ValueError, np.linalg.LinAlgError, FloatingPointError):
+            continue
+    if not candidates:
+        return None
+    # Match bubble_point: follow ``pressure_initial`` for branch continuity on grids.
+    if pressure_initial is not None and np.isfinite(pressure_initial) and float(pressure_initial) > 0.0:
+        p_cont = float(np.clip(float(pressure_initial), PRESSURE_MIN, PRESSURE_MAX))
+        return min(
+            candidates,
+            key=lambda r: abs(np.log(max(r.pressure, 1e-300) / max(p_cont, 1e-300))),
+        )
+    return min(
+        candidates,
+        key=lambda r: abs(np.log(max(r.pressure, 1e-300) / max(P_w_target, 1e-300))),
+    )
 
 
 def _scan_nontrivial_dew_boundary(
@@ -348,45 +465,20 @@ def calculate_dew_point(
             value=max_iterations
         )
 
-    # --- Newton fast path ---------------------------------------------------
-    try:
-        from ..envelope.fast_envelope import (
-            _newton_dew_point, _wilson_k, _wilson_bubble_or_dew_pressure,
-        )
+    # --- Newton (multi-seed Wilson + SS + Newton) ---------------------------
+    ms = _try_multi_seed_newton_dew(
+        float(temperature),
+        z,
+        components,
+        eos,
+        binary_interaction,
+        max_iterations,
+        pressure_initial,
+    )
+    if ms is not None:
+        return _finalize(ms)
 
-        P_w = _wilson_bubble_or_dew_pressure(components, temperature, z, "dew")
-        P_w = float(np.clip(P_w, PRESSURE_MIN, PRESSURE_MAX))
-        if pressure_initial is not None:
-            P_w = float(pressure_initial)
-        K_w = _wilson_k(components, temperature, P_w)
-
-        P_n, x_n, K_n = _newton_dew_point(
-            temperature, P_w, K_w, z, eos, binary_interaction,
-            max_iter=min(20, max_iterations),
-        )
-        if P_n > 0 and np.all(np.isfinite(x_n)):
-            x_n = x_n / x_n.sum()
-            history = IterationHistory()
-            for _i in range(5):
-                history.record_iteration(residual=1e-3 / (_i + 1), accepted=True)
-                history.increment_func_evals(2)
-            return _finalize(DewPointResult(
-                status=ConvergenceStatus.CONVERGED,
-                pressure=float(P_n),
-                temperature=float(temperature),
-                vapor_composition=z.copy(),
-                liquid_composition=x_n,
-                K_values=K_n,
-                iterations=5,
-                residual=0.0,
-                stable_vapor=True,
-                history=history,
-            ))
-    except (ConvergenceError, PhaseError, ValueError, np.linalg.LinAlgError,
-            FloatingPointError, ImportError):
-        pass
-    # --- end Newton fast path ------------------------------------------------
-
+    # --- Robust fallback: TPD bracketing + Brent (after Newton failure) -----
     if pressure_initial is None:
         P0 = _estimate_dew_pressure_wilson(temperature, z, components)
     else:

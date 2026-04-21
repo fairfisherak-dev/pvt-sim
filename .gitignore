@@ -15,6 +15,7 @@ __pycache__/
 # Virtual environments
 .venv/
 venv/
+# Local-only environment overrides. Safe tracked defaults live in .env.defaults.
 .env
 
 # Packaging artifacts
@@ -53,6 +54,16 @@ ehthumbs.db
 # Generated validation / assignment outputs
 assignment_run_*.json
 outputs/
+
+# Cursor — local MCP paths (see .cursor/mcp.json.example)
+.cursor/mcp.json
+.worktrees/
+
+# Claude Code local settings (machine-specific)
+.claude/settings.local.json
+
+# Scratch diagnostic scripts (throwaway, not committed)
+_diag_*.py
 
 # Private course / agent materials
 AGENTS.md
