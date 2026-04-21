@@ -1551,7 +1551,7 @@ class ResultsTableWidget(QWidget):
 
         self.composition_table.setColumnCount(7)
         self.composition_table.setHorizontalHeaderLabels(
-            [f"Pressure ({pressure_unit.value})", "RsD", "RsDi", "Bo", "Bg", "BtD", "Cum. Gas"]
+            [f"Pressure ({pressure_unit.value})", "RsD", "RsDb", "Bo", "Bg", "BtD", "Cum. Gas"]
         )
         self.composition_table.setRowCount(len(result.steps))
 
@@ -2727,9 +2727,9 @@ class ResultsPlotWidget(QWidget):
                 color="#22c55e",
                 default_selected=True,
             ),
-            "rsdi": PlotSeriesSpec(
-                key="rsdi",
-                label="RsDi",
+            "rsdb": PlotSeriesSpec(
+                key="rsdb",
+                label="RsDb",
                 axis_group="gor",
                 axis_label="Solution GOR",
                 overlay_group="solution_gor",
