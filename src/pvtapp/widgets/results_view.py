@@ -685,6 +685,12 @@ class ResultsTableWidget(QWidget):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._finalize_section_tables()
+        # Qt hasn't finalised the panel's width on the first showEvent, so
+        # column-expansion and row-height math both work against stale
+        # geometry and the tables don't reach the right edge / the last
+        # row gets clipped. Defer a second finalize pass for one event-loop
+        # tick so it runs after Qt paints with the real sizes.
+        QTimer.singleShot(0, self._finalize_section_tables)
 
     def clear(self, *, clear_captured: bool = False) -> None:
         """Clear all result displays."""
