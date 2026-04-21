@@ -991,6 +991,7 @@ class ConditionsInputWidget(QWidget):
     def _connect_signals(self) -> None:
         """Connect widget signals."""
         self.calc_type_combo.currentIndexChanged.connect(self._on_calc_type_changed)
+        self.eos_combo.currentIndexChanged.connect(self._on_eos_changed)
         self.pressure_edit.textChanged.connect(self._validate_pressure)
         self.temperature_edit.textChanged.connect(self._validate_temperature)
         self.stability_pressure_edit.textChanged.connect(self._validate_stability_pressure)
@@ -1339,6 +1340,15 @@ class ConditionsInputWidget(QWidget):
 
     def _on_dl_temperature_changed(self, *_args) -> None:
         """Invalidate the cached DL bubble-pressure preview when temperature changes."""
+        self.clear_dl_bubble_pressure()
+        self.conditions_changed.emit()
+
+    def _on_eos_changed(self, *_args) -> None:
+        """Invalidate the cached DL bubble-pressure preview when the EOS changes.
+
+        The preview is computed with the currently selected EOS; without this
+        reset, switching EOS leaves a stale Pb in the DL panel.
+        """
         self.clear_dl_bubble_pressure()
         self.conditions_changed.emit()
 

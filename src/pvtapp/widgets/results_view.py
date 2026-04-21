@@ -181,6 +181,7 @@ class ResultsTableWidget(QWidget):
         self._captured_columns: list[str] = list(self.CAPTURE_BASE_COLUMNS)
         self._display_is_cached = False
         self._ui_scale = DEFAULT_UI_SCALE
+        self._saturation_unit_override: Optional[PressureUnit] = None
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -233,6 +234,37 @@ class ResultsTableWidget(QWidget):
         self.summary_section = self._build_table_section("Summary", self.summary_table)
         self.composition_section = self._build_table_section("Compositions", self.composition_table)
         self.details_section = self._build_table_section("Details", self.details_table)
+
+        # Display-unit selector for saturation-point results. Hidden by default;
+        # shown from _display_saturation_result so the user can flip between
+        # e.g. bar and psia without re-running the calculation.
+        self._saturation_unit_row = QWidget()
+        saturation_unit_layout = QHBoxLayout(self._saturation_unit_row)
+        saturation_unit_layout.setContentsMargins(
+            0, 0, 0, scale_metric(4, DEFAULT_UI_SCALE, reference_scale=DEFAULT_UI_SCALE)
+        )
+        saturation_unit_layout.setSpacing(scale_metric(6, DEFAULT_UI_SCALE, reference_scale=DEFAULT_UI_SCALE))
+        self._saturation_unit_label = QLabel("Display Unit:")
+        self._saturation_unit_label.setStyleSheet("color: #9ca3af;")
+        saturation_unit_layout.addWidget(self._saturation_unit_label)
+        self._saturation_unit_combo = NoWheelComboBox()
+        for unit in (
+            PressureUnit.PSIA,
+            PressureUnit.BAR,
+            PressureUnit.ATM,
+            PressureUnit.KPA,
+            PressureUnit.MPA,
+            PressureUnit.PSI,
+            PressureUnit.PA,
+        ):
+            self._saturation_unit_combo.addItem(unit.value, unit)
+        self._saturation_unit_combo.currentIndexChanged.connect(self._on_saturation_unit_changed)
+        saturation_unit_layout.addWidget(self._saturation_unit_combo)
+        saturation_unit_layout.addStretch(1)
+        self._saturation_unit_row.setVisible(False)
+        summary_layout = self.summary_section.layout()
+        if summary_layout is not None:
+            summary_layout.insertWidget(0, self._saturation_unit_row)
         self.captured_section = QGroupBox("Captured")
         self.captured_section.setObjectName("ResultsSection")
         captured_layout = QVBoxLayout(self.captured_section)
@@ -610,6 +642,10 @@ class ResultsTableWidget(QWidget):
         self.composition_section.setTitle("Compositions")
         self.details_section.setTitle("Details")
 
+        # Reset per-result view state (e.g. saturation display-unit override).
+        self._saturation_unit_override = None
+        self._saturation_unit_row.setVisible(False)
+
         # Display appropriate result type
         if result.pt_flash_result:
             self._display_pt_flash(result.pt_flash_result)
@@ -792,17 +828,50 @@ class ResultsTableWidget(QWidget):
             return PressureUnit.PSIA, TemperatureUnit.C
         return config.pressure_unit, config.temperature_unit
 
+    def _sync_saturation_unit_combo(self, pressure_unit: PressureUnit) -> None:
+        """Align the display-unit combo with the pressure unit currently in use."""
+        self._saturation_unit_combo.blockSignals(True)
+        try:
+            index = self._saturation_unit_combo.findData(pressure_unit)
+            if index >= 0:
+                self._saturation_unit_combo.setCurrentIndex(index)
+        finally:
+            self._saturation_unit_combo.blockSignals(False)
+
+    def _on_saturation_unit_changed(self, *_args) -> None:
+        """Re-render the active saturation result in the newly picked display unit."""
+        if self._current_result is None:
+            return
+        new_unit = self._saturation_unit_combo.currentData()
+        if not isinstance(new_unit, PressureUnit):
+            return
+        if self._saturation_unit_override == new_unit:
+            return
+        self._saturation_unit_override = new_unit
+        result = self._current_result
+        if result.bubble_point_result is not None:
+            self._display_bubble_point(result.bubble_point_result)
+        elif result.dew_point_result is not None:
+            self._display_dew_point(result.dew_point_result)
+        self._finalize_section_tables()
+
     def _saturation_display_units(self) -> tuple[PressureUnit, TemperatureUnit]:
-        """Return the preferred saturation display units."""
+        """Return the preferred saturation display units.
+
+        When the user has picked a display-unit override via the results-pane
+        combo, that wins; otherwise we fall back to the unit captured in the
+        saturation config at run time (or PSIA / C when nothing is available).
+        """
         config: Optional[SaturationPointConfig] = None
         if self._current_result is not None:
             config = (
                 self._current_result.config.bubble_point_config
                 or self._current_result.config.dew_point_config
             )
-        if config is None:
-            return PressureUnit.PSIA, TemperatureUnit.C
-        return config.pressure_unit, config.temperature_unit
+        native_pressure_unit = PressureUnit.PSIA if config is None else config.pressure_unit
+        native_temperature_unit = TemperatureUnit.C if config is None else config.temperature_unit
+        pressure_unit = self._saturation_unit_override or native_pressure_unit
+        return pressure_unit, native_temperature_unit
 
     def _stability_display_units(self) -> tuple[PressureUnit, TemperatureUnit]:
         """Return the preferred standalone stability-analysis display units."""
@@ -1226,6 +1295,8 @@ class ResultsTableWidget(QWidget):
     ) -> None:
         """Display bubble-point or dew-point results."""
         pressure_unit, temperature_unit = self._saturation_display_units()
+        self._sync_saturation_unit_combo(pressure_unit)
+        self._saturation_unit_row.setVisible(True)
         summary_data = [
             (pressure_label, _format_pressure(result.pressure_pa, pressure_unit)),
             ("Temperature", _format_temperature(result.temperature_k, temperature_unit)),

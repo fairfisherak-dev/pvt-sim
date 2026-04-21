@@ -206,6 +206,24 @@ QComboBox::drop-down {{
   border-top-right-radius: {px(6)}px;
   border-bottom-right-radius: {px(6)}px;
 }}
+QComboBox::down-arrow {{
+  image: none;
+  border-left: {px(4)}px solid transparent;
+  border-right: {px(4)}px solid transparent;
+  border-top: {px(5)}px solid {palette['text_muted']};
+  width: 0px;
+  height: 0px;
+  margin-right: {px(8)}px;
+}}
+QComboBox::down-arrow:on {{
+  border-top: none;
+  border-left: {px(4)}px solid transparent;
+  border-right: {px(4)}px solid transparent;
+  border-bottom: {px(5)}px solid {palette['text']};
+}}
+QComboBox:hover::down-arrow {{
+  border-top-color: {palette['text']};
+}}
 QComboBox:hover {{
   background: {palette['surface_hover_bg']};
 }}
@@ -213,11 +231,42 @@ QComboBox:disabled {{
   color: {palette['text_disabled']};
   background: {palette['surface_disabled_bg']};
 }}
+QComboBox:disabled::down-arrow {{
+  border-top-color: {palette['text_disabled']};
+}}
 QComboBox QAbstractItemView {{
   background: {palette['surface_bg']};
   border: 1px solid {palette['border']};
   selection-background-color: {palette['surface_hover_bg']};
   color: {palette['text']};
+}}
+
+/* Checkboxes */
+QCheckBox {{
+  background: transparent;
+  spacing: {px(6)}px;
+}}
+QCheckBox::indicator {{
+  width: {px(14)}px;
+  height: {px(14)}px;
+  border: 1px solid {palette['text_muted']};
+  border-radius: {px(3)}px;
+  background: {palette['surface_bg']};
+}}
+QCheckBox::indicator:hover {{
+  border-color: {palette['selection_bg']};
+}}
+QCheckBox::indicator:checked {{
+  background: {palette['selection_bg']};
+  border-color: {palette['selection_bg']};
+}}
+QCheckBox::indicator:checked:hover {{
+  background: {palette['surface_hover_bg']};
+  border-color: {palette['selection_bg']};
+}}
+QCheckBox::indicator:disabled {{
+  background: {palette['surface_disabled_bg']};
+  border-color: {palette['border_soft']};
 }}
 
 /* Buttons */
@@ -262,24 +311,26 @@ QPushButton#CancelButton:hover {{
 QGroupBox {{
   background: transparent;
   border: none;
-  margin-top: {px(4)}px;
-  padding: {px(2)}px 0 0 0;
+  margin-top: {px(14)}px;
+  padding: {px(6)}px 0 0 0;
 }}
 QGroupBox::title {{
   subcontrol-origin: margin;
+  subcontrol-position: top left;
   left: 0px;
-  padding: 0 {px(3)}px 0 0;
+  padding: {px(2)}px {px(3)}px {px(4)}px 0;
 }}
 QGroupBox#ResultsSection {{
   background: transparent;
   border: none;
-  margin-top: {px(5)}px;
-  padding: 0;
+  margin-top: {px(16)}px;
+  padding: {px(4)}px 0 0 0;
 }}
 QGroupBox#ResultsSection::title {{
   subcontrol-origin: margin;
+  subcontrol-position: top left;
   left: 0px;
-  padding: 0 {px(3)}px {px(4)}px 0;
+  padding: {px(2)}px {px(3)}px {px(6)}px 0;
 }}
 
 /* Tables */
