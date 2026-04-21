@@ -731,16 +731,21 @@ class TextOutputWidget(QWidget):
             lines.append("")
             # Uniform 12-char columns (matches the per-step composition
             # table style) so every header is right-edge-aligned with its
-            # values, even when Unicode subscript glyphs (ρₗ, ρᵥ, μₗ, μᵥ)
-            # render at reduced visual width in the monospace font.
+            # values. Use plain ASCII L / V suffixes instead of Unicode
+            # subscript glyphs (ρₗ, ρᵥ, ...) because Consolas renders the
+            # subscripts at a narrower visual width than ASCII digits, which
+            # drifts the right-edge of every header column leftward and
+            # accumulates across the row. With ρL / ρV / μL / μV every glyph
+            # is exactly one monospace cell so character-count alignment
+            # equals visual alignment.
             cce_col = 12
             lines.append(
                 f"{f'P ({pressure_unit.value})':>{cce_col}s}"
                 f"{'RelVol':>{cce_col}s}"
-                f"{'\u03c1\u2097':>{cce_col}s}"
-                f"{'\u03c1\u1d65':>{cce_col}s}"
-                f"{'\u03bc\u2097':>{cce_col}s}"
-                f"{'\u03bc\u1d65':>{cce_col}s}"
+                f"{'\u03c1L':>{cce_col}s}"
+                f"{'\u03c1V':>{cce_col}s}"
+                f"{'\u03bcL':>{cce_col}s}"
+                f"{'\u03bcV':>{cce_col}s}"
                 f"{'Z\u2011factor':>{cce_col}s}"
             )
             for step in r.steps[:80]:
@@ -824,7 +829,7 @@ class TextOutputWidget(QWidget):
                 f"{'BtD':>10s} "
                 f"{'CumGas':>9s} "
                 f"{'VaporFrac':>11s} "
-                f"{'\u03c1\u2097':>9s} "
+                f"{'\u03c1L':>9s} "
                 f"{'\u03bc_oil':>8s} "
                 f"{'GasSG':>8s} "
                 f"{'GasZ':>8s} "
@@ -888,10 +893,10 @@ class TextOutputWidget(QWidget):
                 f"{'Gas Prod.':>11s} "
                 f"{'Cum. Gas':>10s} "
                 f"{'Z':>8s} "
-                f"{'\u03c1\u2097':>9s} "
-                f"{'\u03c1\u1d65':>9s} "
-                f"{'\u03bc\u2097':>8s} "
-                f"{'\u03bc\u1d65':>8s}"
+                f"{'\u03c1L':>9s} "
+                f"{'\u03c1V':>9s} "
+                f"{'\u03bcL':>8s} "
+                f"{'\u03bcV':>8s}"
             )
             for step in r.steps[:80]:
                 z_two_phase = "" if step.z_two_phase is None else f"{step.z_two_phase:.5f}"
@@ -960,7 +965,7 @@ class TextOutputWidget(QWidget):
             lines.append("")
             lines.append(
                 f"{'Step':>4s} {'AddedGas':>10s} {'BubbleP':>14s} {'SwellFact':>10s} "
-                f"{'\u03c1\u2097':>10s} {'Status':>24s}  Message"
+                f"{'\u03c1L':>10s} {'Status':>24s}  Message"
             )
             for step in r.steps[:80]:
                 bubble_pressure = (
@@ -1014,10 +1019,10 @@ class TextOutputWidget(QWidget):
                 f"{'VaporFrac':>11s} "
                 f"{'LiquidMol':>11s} "
                 f"{'VaporMol':>11s} "
-                f"{'\u03c1\u2097':>9s} "
-                f"{'\u03c1\u1d65':>9s} "
-                f"{'Z\u2097':>8s} "
-                f"{'Z\u1d65':>8s}"
+                f"{'\u03c1L':>9s} "
+                f"{'\u03c1V':>9s} "
+                f"{'ZL':>8s} "
+                f"{'ZV':>8s}"
             )
             for stage in r.stages[:80]:
                 vapor_fraction = "" if stage.vapor_fraction is None else f"{stage.vapor_fraction:.5f}"
