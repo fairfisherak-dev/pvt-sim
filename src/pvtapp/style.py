@@ -94,6 +94,32 @@ def build_cato_stylesheet(*, scale: float = DEFAULT_UI_SCALE, theme: str = DEFAU
 
     palette = get_theme_palette(theme)
 
+    def svg_triangle(direction: str, color: str) -> str:
+        """Return an inline SVG data URI for a small triangle glyph.
+
+        ``direction`` is ``"down"``, ``"up"``, or ``"up-inverted"`` (used for
+        ``::down-arrow:on`` when the combo popup is open). Colors are
+        URL-encoded so the data URI can live inside a QSS ``url(...)``.
+        """
+        color_encoded = color.replace("#", "%23")
+        if direction == "down":
+            pts = "0,0 10,0 5,6"
+        else:
+            pts = "0,6 10,6 5,0"
+        return (
+            f"url(\"data:image/svg+xml;utf8,"
+            f"<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' "
+            f"viewBox='0 0 10 6'>"
+            f"<polygon points='{pts}' fill='{color_encoded}'/>"
+            f"</svg>\")"
+        )
+
+    arrow_down = svg_triangle("down", palette['text'])
+    arrow_up = svg_triangle("up", palette['text'])
+    arrow_down_muted = svg_triangle("down", palette['text_muted'])
+    arrow_up_muted = svg_triangle("up", palette['text_muted'])
+    arrow_down_accent = svg_triangle("down", palette['selection_bg'])
+
     return f"""
 /* Base */
 QMainWindow {{
@@ -223,20 +249,14 @@ QAbstractSpinBox::down-button {{
   margin-right: {px(2)}px;
 }}
 QAbstractSpinBox::up-arrow {{
-  image: none;
-  border-left: {px(4)}px solid transparent;
-  border-right: {px(4)}px solid transparent;
-  border-bottom: {px(5)}px solid {palette['text_muted']};
-  width: 0px;
-  height: 0px;
+  image: {arrow_up_muted};
+  width: {px(8)}px;
+  height: {px(5)}px;
 }}
 QAbstractSpinBox::down-arrow {{
-  image: none;
-  border-left: {px(4)}px solid transparent;
-  border-right: {px(4)}px solid transparent;
-  border-top: {px(5)}px solid {palette['text_muted']};
-  width: 0px;
-  height: 0px;
+  image: {arrow_down_muted};
+  width: {px(8)}px;
+  height: {px(5)}px;
 }}
 QAbstractSpinBox::up-button:hover {{
   background: {palette['surface_hover_bg']};
@@ -245,10 +265,10 @@ QAbstractSpinBox::down-button:hover {{
   background: {palette['surface_hover_bg']};
 }}
 QAbstractSpinBox::up-arrow:hover, QAbstractSpinBox::up-arrow:pressed {{
-  border-bottom-color: {palette['text']};
+  image: {arrow_up};
 }}
 QAbstractSpinBox::down-arrow:hover, QAbstractSpinBox::down-arrow:pressed {{
-  border-top-color: {palette['text']};
+  image: {arrow_down};
 }}
 
 QComboBox {{
@@ -271,21 +291,15 @@ QComboBox:hover::drop-down {{
   background: {palette['surface_hover_bg']};
 }}
 QComboBox::down-arrow {{
-  image: none;
-  border-left: {px(6)}px solid transparent;
-  border-right: {px(6)}px solid transparent;
-  border-top: {px(7)}px solid {palette['text']};
-  width: 0px;
-  height: 0px;
+  image: {arrow_down};
+  width: {px(10)}px;
+  height: {px(6)}px;
 }}
 QComboBox::down-arrow:on {{
-  border-top: none;
-  border-left: {px(6)}px solid transparent;
-  border-right: {px(6)}px solid transparent;
-  border-bottom: {px(7)}px solid {palette['text']};
+  image: {arrow_up};
 }}
 QComboBox:hover::down-arrow {{
-  border-top-color: {palette['selection_bg']};
+  image: {arrow_down_accent};
 }}
 QComboBox:hover {{
   background: {palette['surface_hover_bg']};
@@ -415,6 +429,11 @@ QHeaderView::section {{
   color: {palette['text']};
   padding: {px(5)}px;
   border: 1px solid {palette['border']};
+}}
+QHeaderView::section:checked {{
+  background: {palette['selection_bg']};
+  color: #ffffff;
+  border-color: {palette['selection_bg']};
 }}
 
 /* Tabs */

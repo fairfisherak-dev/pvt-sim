@@ -7,7 +7,7 @@ with strict validation ensuring mole fractions sum to 1.0.
 import json
 from typing import Dict, List, Optional, Tuple
 
-from PySide6.QtCore import QSettings, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QSettings, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QDoubleValidator
 from PySide6.QtWidgets import (
     QAbstractItemDelegate,
@@ -304,6 +304,10 @@ class CompositionInputWidget(QWidget):
         self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.table.setItemDelegateForColumn(1, MoleFractionItemDelegate(self.table))
+        # Highlight the row-number header section when the matching row is
+        # selected (picks up QHeaderView::section:checked from the QSS).
+        self.table.verticalHeader().setHighlightSections(True)
+        self.table.horizontalHeader().setHighlightSections(True)
         group_layout.addWidget(self.table)
         self._sync_column_widths()
 
@@ -538,6 +542,7 @@ class CompositionInputWidget(QWidget):
         combo_index = self.heavy_mode.findData(mode)
         if combo_index >= 0 and combo_index != self.heavy_mode.currentIndex():
             self.heavy_mode.setCurrentIndex(combo_index)
+        self._shrink_heavy_tabs_to_current()
         self.heavy_tabs.updateGeometry()
         self.updateGeometry()
 
@@ -652,6 +657,43 @@ class CompositionInputWidget(QWidget):
                 return row
         return None
 
+    def eventFilter(self, watched, event) -> bool:
+        """Select the composition row when the user clicks/focuses its combo.
+
+        The mole-fraction cell picks up row selection automatically on click,
+        which in turn highlights the row-number header section. Cell widgets
+        (our component combos) bypass that flow, so we mirror it manually.
+        """
+        if isinstance(watched, ClickSelectComboBox) and event is not None:
+            if event.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.FocusIn):
+                row = self._row_for_combo(watched)
+                if row is not None and row != self.table.currentRow():
+                    self.table.setCurrentCell(row, 0)
+        return super().eventFilter(watched, event)
+
+    def _shrink_heavy_tabs_to_current(self) -> None:
+        """Make the heavy-fraction tab widget sizeHint follow the active tab.
+
+        QTabWidget's internal QStackedWidget normally takes the max size of
+        every page, so selecting the (small) Pseudo+ tab while the (tall)
+        C7+ page is hidden leaves a large dead zone above the tab bar. Mark
+        inactive pages as Ignored so the stack shrinks to the active one.
+        """
+        if not hasattr(self, "heavy_tabs"):
+            return
+        current_widget = self.heavy_tabs.currentWidget()
+        for i in range(self.heavy_tabs.count()):
+            page = self.heavy_tabs.widget(i)
+            if page is None:
+                continue
+            if page is current_widget:
+                page.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+            else:
+                page.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+        if current_widget is not None:
+            current_widget.adjustSize()
+        self.heavy_tabs.updateGeometry()
+
     def _sync_heavy_section_visibility(self) -> None:
         """Show Plus Fraction Details only when the composition has a heavy row.
 
@@ -681,6 +723,7 @@ class CompositionInputWidget(QWidget):
             self.heavy_tabs.setCurrentIndex(1)
         elif current == 0:
             self.heavy_tabs.setCurrentIndex(1 if has_plus else 2)
+        self._shrink_heavy_tabs_to_current()
 
     def _row_is_special(self, row: int, role: Optional[str] = None) -> bool:
         widget = self.table.cellWidget(row, 0)
@@ -735,26 +778,27 @@ class CompositionInputWidget(QWidget):
         special_role: Optional[str],
         current_text: str,
     ) -> None:
-        """Configure a row picker as a normal component row or a special feed row."""
+        """Configure a row picker with the full component list.
+
+        ``special_role`` tracks whether the current selection is a C7+ /
+        PSEUDO+ row (for downstream heavy-fraction sync); the drop-down
+        itself always exposes the full picker so the user can freely switch
+        a special row back to any normal component.
+        """
         combo.blockSignals(True)
         try:
             combo.clear()
             combo.setProperty("special_role", special_role)
-            if special_role is None:
-                combo.setEditable(True)
-                combo.addItems(COMPONENT_PICKER_OPTIONS)
-                display_text = self._display_label_for_component(current_text)
-                if current_text:
-                    if combo.findText(display_text) >= 0:
-                        combo.setCurrentText(display_text)
-                    else:
-                        combo.setEditText(display_text)
-            else:
-                token = self._special_token_for_role(special_role)
-                display_text = self._display_label_for_component(token)
-                combo.setEditable(False)
-                combo.addItem(display_text, token)
-                combo.setCurrentIndex(0)
+            combo.setEditable(True)
+            combo.addItems(COMPONENT_PICKER_OPTIONS)
+            if special_role is not None:
+                current_text = self._special_token_for_role(special_role)
+            display_text = self._display_label_for_component(current_text)
+            if current_text:
+                if combo.findText(display_text) >= 0:
+                    combo.setCurrentText(display_text)
+                else:
+                    combo.setEditText(display_text)
         finally:
             combo.blockSignals(False)
 
@@ -903,18 +947,42 @@ class CompositionInputWidget(QWidget):
             self._sync_inline_fraction_fields_from_row()
 
     def _handle_component_selection(self, sender: ClickSelectComboBox) -> None:
-        """Promote explicit special tokens selected in the main table to special rows."""
+        """Route component-combo changes to promotion or demotion as needed.
+
+        - Picking C7+ or PSEUDO+ on any row promotes that row (and clears
+          any prior C7+/PSEUDO+ row with the same role).
+        - Picking a normal component on a row that was previously C7+ or
+          PSEUDO+ demotes it back to a normal row and realigns heavy_mode
+          so the Plus Fraction Details panel follows suit.
+        """
         row = self._row_for_combo(sender)
         if row is None:
             return
-        role = self._special_role_for_component(self._combo_component_token(sender))
-        if role is None:
+        previous_role = sender.property("special_role")
+        new_role = self._special_role_for_component(self._combo_component_token(sender))
+
+        if new_role is not None:
+            self._promote_row_to_special_role(row, new_role)
+            target_index = self.heavy_mode.findData(new_role)
+            if target_index >= 0 and target_index != self.heavy_mode.currentIndex():
+                self.heavy_mode.setCurrentIndex(target_index)
             return
 
-        self._promote_row_to_special_role(row, role)
-        target_index = self.heavy_mode.findData(role)
-        if target_index >= 0 and target_index != self.heavy_mode.currentIndex():
-            self.heavy_mode.setCurrentIndex(target_index)
+        if previous_role is None:
+            return
+
+        # Demotion: previously-special row is now a normal component row.
+        sender.setProperty("special_role", None)
+        other_role = (
+            HEAVY_MODE_INLINE if previous_role == HEAVY_MODE_PLUS else HEAVY_MODE_PLUS
+        )
+        if self._find_special_row(other_role) is not None:
+            fallback_mode = other_role
+        else:
+            fallback_mode = HEAVY_MODE_NONE
+        fallback_index = self.heavy_mode.findData(fallback_mode)
+        if fallback_index >= 0 and fallback_index != self.heavy_mode.currentIndex():
+            self.heavy_mode.setCurrentIndex(fallback_index)
 
     def _remove_special_row(self, role: str) -> None:
         row = self._find_special_row(role)
@@ -1156,6 +1224,9 @@ class CompositionInputWidget(QWidget):
         combo = ClickSelectComboBox(ui_scale=self._ui_scale)
         self._configure_component_combo(combo, special_role=special_role, current_text=comp_id)
         combo.currentTextChanged.connect(self._on_cell_changed)
+        # Select this row when the user interacts with the combo so the row
+        # header (1, 2, 3, ...) highlights to match the mole-fraction cell.
+        combo.installEventFilter(self)
         self.table.setCellWidget(row, 0, combo)
 
         # Mole fraction
