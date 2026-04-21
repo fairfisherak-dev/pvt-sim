@@ -36,9 +36,7 @@ PYTHON = sys.executable
 BASELINE_MERGE_GATE_PYTEST_ITEMS: tuple[str, ...] = (
     "tests/unit/test_flash.py",
     "tests/unit/test_cli_validate.py",
-    "tests/unit/test_pvtapp_phase_envelope_workflow.py",
-    "tests/unit/test_pvtapp_cce_workflow.py",
-    "tests/contracts/test_invariants.py",
+    "tests/unit/test_runtime_contract.py",
 )
 BASELINE_SMOKE_TESTS = frozenset(
     Path(item.split("::", 1)[0]).as_posix().lstrip("./") for item in BASELINE_MERGE_GATE_PYTEST_ITEMS
@@ -67,7 +65,7 @@ PHASE_ENVELOPE_EXAMPLE_PATH_PREFIXES: tuple[str, ...] = (
     "examples/phase_envelope_config.json",
     "tests/unit/test_envelope.py",
     "tests/unit/test_envelope_continuation.py",
-    "tests/unit/test_pvtapp_phase_envelope_workflow.py",
+    "tests/unit/test_runtime_contract.py",
 )
 PT_FLASH_EXAMPLE_PATH_PREFIXES: tuple[str, ...] = (
     "src/pvtcore/flash/",
@@ -249,7 +247,7 @@ FAST_GROUPS = (
             "scripts/run_phase_envelope_validation.py",
             "scripts/validate_envelope.py",
             "examples/phase_envelope_config.json",
-            "tests/unit/test_pvtapp_phase_envelope_workflow.py",
+            "tests/unit/test_runtime_contract.py",
         ),
         steps=(
             CheckStep(
@@ -260,7 +258,7 @@ FAST_GROUPS = (
                     "pytest",
                     "tests/unit/test_envelope.py",
                     "tests/unit/test_envelope_continuation.py",
-                    "tests/unit/test_pvtapp_phase_envelope_workflow.py",
+                    "tests/unit/test_runtime_contract.py",
                     "-q",
                 ),
             ),
