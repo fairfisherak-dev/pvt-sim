@@ -373,7 +373,7 @@ class ConditionsInputWidget(QWidget):
         self.pressure_unit = NoWheelComboBox()
         for unit in PressureUnit:
             self.pressure_unit.addItem(unit.value, unit)
-        self.pressure_unit.setCurrentIndex(3)  # bar
+        self.pressure_unit.setCurrentIndex(5)  # psia (US petroleum engineering default)
         self._configure_unit_row(p_layout, self.pressure_edit, self.pressure_unit)
 
         layout.addRow("Pressure:", p_layout)
@@ -581,7 +581,7 @@ class ConditionsInputWidget(QWidget):
         guess_unit = NoWheelComboBox()
         for unit in PressureUnit:
             guess_unit.addItem(unit.value, unit)
-        guess_unit.setCurrentIndex(3)  # bar
+        guess_unit.setCurrentIndex(5)  # psia (US petroleum engineering default)
         guess_unit.setEnabled(False)
         setattr(self, f"{guess_spin_attr}_unit", guess_unit)
         self._configure_unit_row(guess_spin_layout, guess_spin, guess_unit)
@@ -718,34 +718,34 @@ class ConditionsInputWidget(QWidget):
         layout = QFormLayout(widget)
         self._configure_form_layout(layout)
 
-        # Temperature
+        # Temperature (default units: F, US petroleum engineering convention).
         t_layout = QHBoxLayout()
         self.cvd_temperature = NoWheelDoubleSpinBox()
-        self.cvd_temperature.setRange(-200, 500)
-        self.cvd_temperature.setValue(200)  # F default (previously 100 C)
+        self.cvd_temperature.setRange(-400, 1200)
+        self.cvd_temperature.setValue(200)
         self.cvd_temperature.setDecimals(2)
         t_layout.addWidget(self.cvd_temperature)
-        t_layout.addWidget(QLabel("C"))
+        t_layout.addWidget(QLabel("F"))
         layout.addRow("Temperature:", t_layout)
 
-        # Dew pressure
+        # Dew pressure (default units: psia).
         p_dew_layout = QHBoxLayout()
         self.cvd_p_dew = NoWheelDoubleSpinBox()
-        self.cvd_p_dew.setRange(0.01, 10000)
-        self.cvd_p_dew.setValue(300)
+        self.cvd_p_dew.setRange(0.01, 150000)
+        self.cvd_p_dew.setValue(4500)
         self.cvd_p_dew.setDecimals(2)
         p_dew_layout.addWidget(self.cvd_p_dew)
-        p_dew_layout.addWidget(QLabel("bar"))
+        p_dew_layout.addWidget(QLabel("psia"))
         layout.addRow("Dew Pressure:", p_dew_layout)
 
-        # End pressure
+        # End pressure (default units: psia).
         p_end_layout = QHBoxLayout()
         self.cvd_p_end = NoWheelDoubleSpinBox()
-        self.cvd_p_end.setRange(0.01, 10000)
-        self.cvd_p_end.setValue(50)
+        self.cvd_p_end.setRange(0.01, 150000)
+        self.cvd_p_end.setValue(500)
         self.cvd_p_end.setDecimals(2)
         p_end_layout.addWidget(self.cvd_p_end)
-        p_end_layout.addWidget(QLabel("bar"))
+        p_end_layout.addWidget(QLabel("psia"))
         layout.addRow("End Pressure:", p_end_layout)
 
         # Number of steps
@@ -766,20 +766,20 @@ class ConditionsInputWidget(QWidget):
 
         reservoir_pressure_layout = QHBoxLayout()
         self.separator_reservoir_pressure = NoWheelDoubleSpinBox()
-        self.separator_reservoir_pressure.setRange(0.01, 10000)
-        self.separator_reservoir_pressure.setValue(300)
+        self.separator_reservoir_pressure.setRange(0.01, 150000)
+        self.separator_reservoir_pressure.setValue(4500)
         self.separator_reservoir_pressure.setDecimals(2)
         reservoir_pressure_layout.addWidget(self.separator_reservoir_pressure)
-        reservoir_pressure_layout.addWidget(QLabel("bar"))
+        reservoir_pressure_layout.addWidget(QLabel("psia"))
         form_layout.addRow("Reservoir Pressure:", reservoir_pressure_layout)
 
         reservoir_temperature_layout = QHBoxLayout()
         self.separator_reservoir_temperature = NoWheelDoubleSpinBox()
-        self.separator_reservoir_temperature.setRange(-200, 500)
-        self.separator_reservoir_temperature.setValue(200)  # F default (previously 100 C)
+        self.separator_reservoir_temperature.setRange(-400, 1200)
+        self.separator_reservoir_temperature.setValue(200)
         self.separator_reservoir_temperature.setDecimals(2)
         reservoir_temperature_layout.addWidget(self.separator_reservoir_temperature)
-        reservoir_temperature_layout.addWidget(QLabel("C"))
+        reservoir_temperature_layout.addWidget(QLabel("F"))
         form_layout.addRow("Reservoir Temperature:", reservoir_temperature_layout)
 
         self.separator_include_stock_tank = QCheckBox("Include stock-tank stage")
@@ -1808,11 +1808,8 @@ class ConditionsInputWidget(QWidget):
     def get_phase_envelope_config(self) -> Optional[PhaseEnvelopeConfig]:
         """Get phase envelope configuration if valid."""
         try:
-            t_min_c = self.env_t_min.value()
-            t_max_c = self.env_t_max.value()
-
-            t_min_k = t_min_c + 273.15
-            t_max_k = t_max_c + 273.15
+            t_min_k = temperature_to_k(self.env_t_min.value(), TemperatureUnit.F)
+            t_max_k = temperature_to_k(self.env_t_max.value(), TemperatureUnit.F)
 
             if t_min_k >= t_max_k:
                 self.validation_error.emit("Min temperature must be less than max")
@@ -2093,9 +2090,9 @@ class ConditionsInputWidget(QWidget):
     def get_cvd_config(self) -> Optional[CVDConfig]:
         """Get CVD configuration if valid."""
         try:
-            t_k = self.cvd_temperature.value() + 273.15
-            p_dew_pa = self.cvd_p_dew.value() * 1e5  # bar to Pa
-            p_end_pa = self.cvd_p_end.value() * 1e5
+            t_k = temperature_to_k(self.cvd_temperature.value(), TemperatureUnit.F)
+            p_dew_pa = pressure_to_pa(self.cvd_p_dew.value(), PressureUnit.PSIA)
+            p_end_pa = pressure_to_pa(self.cvd_p_end.value(), PressureUnit.PSIA)
 
             if p_dew_pa <= p_end_pa:
                 self.validation_error.emit(
@@ -2208,8 +2205,12 @@ class ConditionsInputWidget(QWidget):
                 )
 
             return SeparatorConfig(
-                reservoir_pressure_pa=self.separator_reservoir_pressure.value() * 1e5,
-                reservoir_temperature_k=self.separator_reservoir_temperature.value() + 273.15,
+                reservoir_pressure_pa=pressure_to_pa(
+                    self.separator_reservoir_pressure.value(), PressureUnit.PSIA
+                ),
+                reservoir_temperature_k=temperature_to_k(
+                    self.separator_reservoir_temperature.value(), TemperatureUnit.F
+                ),
                 include_stock_tank=self.separator_include_stock_tank.isChecked(),
                 separator_stages=stages,
             )
