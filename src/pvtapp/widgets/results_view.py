@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from PySide6.QtCore import QEvent, QObject, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -576,27 +576,72 @@ class ResultsTableWidget(QWidget):
 
         Because all results scrolling happens at the outer ``sections_scroll``
         layer, we want each table to be tall enough that none of its rows
-        get clipped or forced into a nested scroll. ``resizeRowsToContents``
-        + ``horizontalHeader().sizeHint()`` gives us stable dimensions
-        even before the widget has been painted, and we then call
-        ``setFixedHeight`` so the QVBoxLayout won't squeeze the table.
+        get clipped or forced into a nested scroll.
+
+        Timing subtlety: Qt's row-height APIs (``rowHeight``, ``sizeHintForRow``,
+        and even the vertical header's ``sectionSize``) don't reflect the
+        row's ACTUALLY-RENDERED height until after the paint queue flushes.
+        If we call this synchronously right after ``setRowCount`` +
+        populating cells — which is exactly what ``_finalize_section_tables``
+        does — every row APIs returns a small default (e.g. 20 px from
+        ``sizeHintForRow`` or 30 px from ``defaultSectionSize``) even though
+        the row will actually render at ~37 px once the stylesheet's
+        padding and font-size apply. That used to clip the last row.
+
+        Fix: compute an optimistic height on the first synchronous call
+        using a generous per-row floor (``_row_height_estimate`` below),
+        then schedule a deferred second pass via ``QTimer.singleShot(0)``
+        that re-reads the row heights after Qt has painted the table and
+        the sizing APIs have settled. The deferred pass calls
+        ``setFixedHeight`` again so the table grows (or shrinks) to the
+        real content height.
         """
         if table.columnCount() == 0:
             table.setMinimumHeight(0)
             table.setMaximumHeight(0)
             return
         table.resizeRowsToContents()
+        self._apply_table_fixed_height(table)
+        # Defer a second pass for the same table so the painted row heights
+        # get picked up after Qt flushes layout. This is a no-op if the
+        # initial pass already computed the right height.
+        QTimer.singleShot(0, lambda t=table: self._apply_table_fixed_height(t))
+
+    def _apply_table_fixed_height(self, table: QTableWidget) -> None:
+        """Read current row/header heights and setFixedHeight on the table."""
+        if table is None or table.columnCount() == 0:
+            return
         header = table.horizontalHeader()
-        header_height = header.sizeHint().height() if header.isVisible() else 0
-        body_height = sum(table.rowHeight(row) for row in range(table.rowCount()))
-        # Safety pad so a one-pixel rounding never forces the last row into
-        # a nested scroll region.
+        header_height = max(header.sizeHint().height(), header.height())
+        row_floor = self._row_height_estimate(table)
+        body_height = 0
+        for row in range(table.rowCount()):
+            body_height += max(
+                row_floor,
+                table.verticalHeader().sectionSize(row),
+                table.rowHeight(row),
+            )
         pad = scale_metric(6, self._ui_scale, reference_scale=DEFAULT_UI_SCALE)
         height = max(
             scale_metric(60, self._ui_scale, reference_scale=DEFAULT_UI_SCALE),
             header_height + body_height + (2 * table.frameWidth()) + pad,
         )
-        table.setFixedHeight(height)
+        if table.maximumHeight() != height or table.minimumHeight() != height:
+            table.setFixedHeight(height)
+
+    def _row_height_estimate(self, table: QTableWidget) -> int:
+        """Conservative floor for a row's rendered height.
+
+        Derived from font metrics + QSS cell padding; Qt's internal
+        ``defaultSectionSize`` is too small for our themed rows (20-30 px
+        vs the actual ~37 px).
+        """
+        metrics = table.fontMetrics()
+        line = metrics.height()
+        # Our QSS gives QTableWidget cells ~5 px vertical padding on each
+        # side. A generous floor of line + 18 keeps rows from getting
+        # clipped even when a theme bumps line height.
+        return max(32, line + 18)
 
     @staticmethod
     def _section_has_content(table: QTableWidget) -> bool:
