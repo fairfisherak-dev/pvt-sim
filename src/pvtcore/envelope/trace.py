@@ -25,6 +25,9 @@ _TERMINATING_SATURATION_REASONS = {
     "post_check_failed",
 }
 
+# Re-solve with Wilson-only root selection if continuity jumps (non-physical branch hop).
+_MAX_LOG_PRESSURE_JUMP_GRID: float = 0.42
+
 
 @dataclass
 class TracedEnvelopeResult:
@@ -168,6 +171,30 @@ def trace_phase_envelope(
                 post_check_stability_flip=True,
                 post_check_action="raise",
             )
+            if P_bubble_prev is not None and getattr(br, "converged", True):
+                pp = float(P_bubble_prev)
+                pn = float(br.pressure)
+                log_jump = abs(np.log(max(pn, 1e-300) / max(pp, 1e-300)))
+                if log_jump > _MAX_LOG_PRESSURE_JUMP_GRID:
+                    try:
+                        br_alt = calculate_bubble_point(
+                            float(T),
+                            z,
+                            components,
+                            eos,
+                            pressure_initial=None,
+                            binary_interaction=binary_interaction,
+                            check_stability=False,
+                            post_check_stability_flip=True,
+                            post_check_action="raise",
+                        )
+                        if getattr(br_alt, "converged", True):
+                            pa = float(br_alt.pressure)
+                            alt_jump = abs(np.log(max(pa, 1e-300) / max(pp, 1e-300)))
+                            if alt_jump < log_jump - 0.05:
+                                br = br_alt
+                    except (PhaseError, ConvergenceError, ValidationError):
+                        pass
             # Reject non-converged or bound-clamped results; these indicate no saturation within the search bounds.
             if not getattr(br, 'converged', True):
                 raise PhaseError(
@@ -209,6 +236,30 @@ def trace_phase_envelope(
                 post_check_stability_flip=True,
                 post_check_action="raise",
             )
+            if P_dew_prev is not None and getattr(dr, "converged", True):
+                pp = float(P_dew_prev)
+                pn = float(dr.pressure)
+                log_jump = abs(np.log(max(pn, 1e-300) / max(pp, 1e-300)))
+                if log_jump > _MAX_LOG_PRESSURE_JUMP_GRID:
+                    try:
+                        dr_alt = calculate_dew_point(
+                            float(T),
+                            z,
+                            components,
+                            eos,
+                            pressure_initial=None,
+                            binary_interaction=binary_interaction,
+                            check_stability=False,
+                            post_check_stability_flip=True,
+                            post_check_action="raise",
+                        )
+                        if getattr(dr_alt, "converged", True):
+                            pa = float(dr_alt.pressure)
+                            alt_jump = abs(np.log(max(pa, 1e-300) / max(pp, 1e-300)))
+                            if alt_jump < log_jump - 0.05:
+                                dr = dr_alt
+                    except (PhaseError, ConvergenceError, ValidationError):
+                        pass
             # Reject non-converged or bound-clamped results; these indicate no saturation within the search bounds.
             if not getattr(dr, 'converged', True):
                 raise PhaseError(

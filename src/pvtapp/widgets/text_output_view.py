@@ -64,37 +64,37 @@ def _format_optional_measurement(value: Optional[float], *, precision: int, unit
 
 def _pt_flash_units(config: Optional[PTFlashConfig]) -> tuple[PressureUnit, TemperatureUnit]:
     if config is None:
-        return PressureUnit.BAR, TemperatureUnit.C
+        return PressureUnit.PSIA, TemperatureUnit.C
     return config.pressure_unit, config.temperature_unit
 
 
 def _saturation_units(config: Optional[SaturationPointConfig]) -> tuple[PressureUnit, TemperatureUnit]:
     if config is None:
-        return PressureUnit.BAR, TemperatureUnit.C
+        return PressureUnit.PSIA, TemperatureUnit.C
     return config.pressure_unit, config.temperature_unit
 
 
 def _cce_units(config: Optional[CCEConfig]) -> tuple[PressureUnit, TemperatureUnit]:
     if config is None:
-        return PressureUnit.BAR, TemperatureUnit.C
+        return PressureUnit.PSIA, TemperatureUnit.C
     return config.pressure_unit, config.temperature_unit
 
 
 def _dl_units(config: Optional[DLConfig]) -> tuple[PressureUnit, TemperatureUnit]:
     if config is None:
-        return PressureUnit.BAR, TemperatureUnit.C
+        return PressureUnit.PSIA, TemperatureUnit.C
     return config.pressure_unit, config.temperature_unit
 
 
 def _stability_units(config: Optional[StabilityAnalysisConfig]) -> tuple[PressureUnit, TemperatureUnit]:
     if config is None:
-        return PressureUnit.BAR, TemperatureUnit.C
+        return PressureUnit.PSIA, TemperatureUnit.C
     return config.pressure_unit, config.temperature_unit
 
 
 def _swelling_units(config: Optional[SwellingTestConfig]) -> tuple[PressureUnit, TemperatureUnit]:
     if config is None:
-        return PressureUnit.BAR, TemperatureUnit.C
+        return PressureUnit.PSIA, TemperatureUnit.C
     return config.pressure_unit, config.temperature_unit
 
 
@@ -460,6 +460,16 @@ class TextOutputWidget(QWidget):
                 lines.append(f"Switched:      {'yes' if r.continuation_switched else 'no'}")
             if r.critical_source is not None:
                 lines.append(f"Critical src:  {r.critical_source}")
+            if r.bubble_termination_reason is not None:
+                bubble_stop = r.bubble_termination_reason
+                if r.bubble_termination_temperature_k is not None:
+                    bubble_stop = f"{bubble_stop} @ {r.bubble_termination_temperature_k:.3f} K"
+                lines.append(f"Bubble stop:   {bubble_stop}")
+            if r.dew_termination_reason is not None:
+                dew_stop = r.dew_termination_reason
+                if r.dew_termination_temperature_k is not None:
+                    dew_stop = f"{dew_stop} @ {r.dew_termination_temperature_k:.3f} K"
+                lines.append(f"Dew stop:      {dew_stop}")
 
             if r.critical_point is not None:
                 cp = r.critical_point

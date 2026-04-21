@@ -58,6 +58,12 @@ assignment_run_*.json
 .cursor/mcp.json
 .worktrees/
 
+# Claude Code local settings (machine-specific)
+.claude/settings.local.json
+
+# Scratch diagnostic scripts (throwaway, not committed)
+_diag_*.py
+
 # Private course / agent materials
 AGENTS.md
 .agents/

@@ -271,6 +271,7 @@ class CompositionInputWidget(QWidget):
         """Create the widget UI."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
 
         # Group box for composition
         group = QGroupBox("Fluid Composition")
@@ -314,8 +315,8 @@ class CompositionInputWidget(QWidget):
 
         button_layout = QGridLayout()
         button_layout.setContentsMargins(0, 0, 0, 0)
-        button_layout.setHorizontalSpacing(8)
-        button_layout.setVerticalSpacing(8)
+        button_layout.setHorizontalSpacing(6)
+        button_layout.setVerticalSpacing(4)
         button_layout.addWidget(self.add_btn, 0, 0)
         button_layout.addWidget(self.remove_btn, 0, 1)
         button_layout.addWidget(self.normalize_btn, 1, 0)
@@ -412,7 +413,7 @@ class CompositionInputWidget(QWidget):
         self.plus_tbp_fit_widget = QWidget()
         plus_tbp_layout = QVBoxLayout(self.plus_tbp_fit_widget)
         plus_tbp_layout.setContentsMargins(0, 0, 0, 0)
-        plus_tbp_layout.setSpacing(8)
+        plus_tbp_layout.setSpacing(4)
         self.plus_tbp_fit_note = QLabel(
             "Optional TBP cuts used when Pedersen A/B is solved from fit_to_tbp. "
             "Enter ordered cuts such as C7, C7-C9, C10-C12. Gaps are allowed."
@@ -492,14 +493,14 @@ class CompositionInputWidget(QWidget):
         layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         layout.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        layout.setHorizontalSpacing(10)
-        layout.setVerticalSpacing(8)
+        layout.setHorizontalSpacing(8)
+        layout.setVerticalSpacing(4)
 
     @staticmethod
     def _configure_unit_row(layout: QHBoxLayout, field: QWidget, unit_widget: QWidget) -> None:
         """Give inline unit rows stable proportions in the narrow sidebar."""
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(4)
         field.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         unit_widget.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         unit_widget.setProperty("sidebar_unit_widget", True)
@@ -1005,15 +1006,15 @@ class CompositionInputWidget(QWidget):
 
     def _sync_heavy_tab_spacing(self) -> None:
         """Keep a small visual gap between the tab strip and the first form row."""
-        top_margin = scale_metric(6, self._ui_scale, reference_scale=DEFAULT_UI_SCALE)
+        top_margin = scale_metric(3, self._ui_scale, reference_scale=DEFAULT_UI_SCALE)
         for form_layout in (self.plus_form, self.inline_form):
             form_layout.setContentsMargins(0, top_margin, 0, 0)
 
     def apply_ui_scale(self, ui_scale: float) -> None:
         """Scale non-QSS geometry to follow the app zoom level."""
         self._ui_scale = ui_scale
-        scaled_gap = scale_metric(10, ui_scale, reference_scale=DEFAULT_UI_SCALE)
-        scaled_row_gap = scale_metric(8, ui_scale, reference_scale=DEFAULT_UI_SCALE)
+        scaled_gap = scale_metric(5, ui_scale, reference_scale=DEFAULT_UI_SCALE)
+        scaled_row_gap = scale_metric(4, ui_scale, reference_scale=DEFAULT_UI_SCALE)
         scaled_unit_width = scale_metric(96, ui_scale, reference_scale=DEFAULT_UI_SCALE)
 
         root_layout = self.layout()

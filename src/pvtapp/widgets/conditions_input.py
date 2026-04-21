@@ -169,6 +169,7 @@ class ConditionsInputWidget(QWidget):
         """Create the widget UI."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
 
         # Calculation type selection
         calc_group = QGroupBox("Calculation Type")
@@ -267,14 +268,14 @@ class ConditionsInputWidget(QWidget):
         layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         layout.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        layout.setHorizontalSpacing(10)
-        layout.setVerticalSpacing(8)
+        layout.setHorizontalSpacing(8)
+        layout.setVerticalSpacing(4)
 
     @staticmethod
     def _configure_unit_row(layout: QHBoxLayout, field: QWidget, unit_widget: QWidget) -> None:
         """Give input/unit rows predictable proportions inside narrow forms."""
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(4)
         field.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         unit_widget.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         unit_widget.setProperty("sidebar_unit_widget", True)
@@ -284,7 +285,7 @@ class ConditionsInputWidget(QWidget):
         layout.addWidget(unit_widget, 0)
 
     @staticmethod
-    def _populate_pressure_units(combo: NoWheelComboBox, default_unit: PressureUnit = PressureUnit.BAR) -> None:
+    def _populate_pressure_units(combo: NoWheelComboBox, default_unit: PressureUnit = PressureUnit.PSIA) -> None:
         """Populate a pressure-unit combo with the shared enum order."""
         for unit in PressureUnit:
             combo.addItem(unit.value, unit)
@@ -328,8 +329,8 @@ class ConditionsInputWidget(QWidget):
 
     def apply_ui_scale(self, ui_scale: float) -> None:
         """Scale sidebar-only geometry that is not controlled by QSS."""
-        scaled_gap = scale_metric(10, ui_scale, reference_scale=DEFAULT_UI_SCALE)
-        scaled_row_gap = scale_metric(8, ui_scale, reference_scale=DEFAULT_UI_SCALE)
+        scaled_gap = scale_metric(5, ui_scale, reference_scale=DEFAULT_UI_SCALE)
+        scaled_row_gap = scale_metric(4, ui_scale, reference_scale=DEFAULT_UI_SCALE)
         scaled_unit_width = scale_metric(96, ui_scale, reference_scale=DEFAULT_UI_SCALE)
 
         root_layout = self.layout()
@@ -414,12 +415,12 @@ class ConditionsInputWidget(QWidget):
 
         self.env_tracing_method = NoWheelComboBox()
         self.env_tracing_method.addItem(
-            "Continuation (Default)",
-            PhaseEnvelopeTracingMethod.CONTINUATION,
+            "Fixed grid (recommended — fast)",
+            PhaseEnvelopeTracingMethod.FIXED_GRID,
         )
         self.env_tracing_method.addItem(
-            "Legacy (Fixed Grid)",
-            PhaseEnvelopeTracingMethod.FIXED_GRID,
+            "Continuation (multi-root / difficult fluids)",
+            PhaseEnvelopeTracingMethod.CONTINUATION,
         )
         layout.addRow("Tracer:", self.env_tracing_method)
 
@@ -435,7 +436,7 @@ class ConditionsInputWidget(QWidget):
         self.stability_pressure_edit = ValidatedLineEdit()
         self.stability_pressure_edit.setPlaceholderText("Enter pressure")
         self.stability_pressure_unit = NoWheelComboBox()
-        self._populate_pressure_units(self.stability_pressure_unit, PressureUnit.BAR)
+        self._populate_pressure_units(self.stability_pressure_unit, PressureUnit.PSIA)
         self._configure_unit_row(
             pressure_layout,
             self.stability_pressure_edit,
@@ -487,7 +488,7 @@ class ConditionsInputWidget(QWidget):
         widget = QGroupBox("TBP Settings")
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(4)
 
         note = QLabel(
             "Standalone TBP assay. Enter ordered cuts such as C7, C7-C9, C10-C12. "
@@ -621,7 +622,7 @@ class ConditionsInputWidget(QWidget):
         self.cce_p_start.setValue(500)
         self.cce_p_start.setDecimals(2)
         self.cce_pressure_unit = NoWheelComboBox()
-        self._populate_pressure_units(self.cce_pressure_unit, PressureUnit.BAR)
+        self._populate_pressure_units(self.cce_pressure_unit, PressureUnit.PSIA)
         self._configure_unit_row(p_start_layout, self.cce_p_start, self.cce_pressure_unit)
         layout.addRow("Start Pressure:", p_start_layout)
 
@@ -631,7 +632,7 @@ class ConditionsInputWidget(QWidget):
         self.cce_p_end.setRange(0.01, 10000)
         self.cce_p_end.setValue(50)
         self.cce_p_end.setDecimals(2)
-        self.cce_p_end_unit = QLabel(PressureUnit.BAR.value)
+        self.cce_p_end_unit = QLabel(PressureUnit.PSIA.value)
         self._configure_unit_row(p_end_layout, self.cce_p_end, self.cce_p_end_unit)
         layout.addRow("End Pressure:", p_end_layout)
 
@@ -676,7 +677,7 @@ class ConditionsInputWidget(QWidget):
             "Auto-calculated from the active fluid composition and temperature when the configuration is built.",
         )
         self.dl_pressure_unit = NoWheelComboBox()
-        self._populate_pressure_units(self.dl_pressure_unit, PressureUnit.BAR)
+        self._populate_pressure_units(self.dl_pressure_unit, PressureUnit.PSIA)
         self._configure_unit_row(bubble_layout, self.dl_bubble_pressure, self.dl_pressure_unit)
         layout.addRow("Bubble Pressure:", bubble_layout)
 
@@ -685,7 +686,7 @@ class ConditionsInputWidget(QWidget):
         self.dl_p_end.setRange(0.01, 10000)
         self.dl_p_end.setValue(10)
         self.dl_p_end.setDecimals(2)
-        self.dl_p_end_unit = QLabel(PressureUnit.BAR.value)
+        self.dl_p_end_unit = QLabel(PressureUnit.PSIA.value)
         self._configure_unit_row(end_layout, self.dl_p_end, self.dl_p_end_unit)
         layout.addRow("End Pressure:", end_layout)
 
@@ -809,7 +810,7 @@ class ConditionsInputWidget(QWidget):
         widget = QGroupBox("Swelling Test Settings")
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(4)
 
         note = QLabel(
             "Oil feed comes from the main composition editor. Enter a fixed test "
@@ -834,7 +835,7 @@ class ConditionsInputWidget(QWidget):
         form_layout.addRow("Temperature:", t_layout)
 
         self.swelling_pressure_unit = NoWheelComboBox()
-        self._populate_pressure_units(self.swelling_pressure_unit, PressureUnit.BAR)
+        self._populate_pressure_units(self.swelling_pressure_unit, PressureUnit.PSIA)
         form_layout.addRow("Pressure Unit:", self.swelling_pressure_unit)
 
         self.swelling_enrichment_steps = QLineEdit("0.05, 0.10, 0.20, 0.35")

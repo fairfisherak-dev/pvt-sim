@@ -959,6 +959,17 @@ def execute_phase_envelope(
 ) -> PhaseEnvelopeResult:
     """Execute a phase envelope calculation.
 
+    **Fixed grid** (default): ``trace_phase_envelope`` walks a temperature mesh and
+    solves bubble + dew at each node with pressure warm-started from the previous
+    node — the usual interactive cost model (O(n) saturation solves).
+
+    **Continuation**: ``trace_envelope_continuation`` adaptively follows certified
+    branch roots with critical junction handling — intended for multi-root or
+    pathological fluids; much heavier than fixed grid.
+
+    For library-internal **Michelsen-style** Newton marching on fugacity equality
+    without the continuation wrapper, see ``pvtcore.envelope.fast_envelope``.
+
     Args:
         config: Run configuration (must have phase_envelope_config set)
         callback: Optional progress callback
@@ -995,33 +1006,34 @@ def execute_phase_envelope(
             callback.on_progress(config.run_id or '', 0.3, "Tracing phase envelope (continuation)...")
 
     if tracing_method is not PhaseEnvelopeTracingMethod.FIXED_GRID:
-        from pvtcore.envelope import trace_envelope_continuation
-        from pvtcore.envelope.continuation import resolve_continuation_runtime_policy
+        # Route continuation/adaptive tracing through the fast Newton tracer
+        # (``calculate_phase_envelope_fast``) directly, so cancellation from the
+        # callback propagates out as ``CalculationCancelledError`` without being
+        # swallowed by the envelope wrapper's broad fallback try/except. The
+        # fast tracer marches along the saturation locus by Michelsen-style
+        # Newton on fugacity equality with warm-started K-values and pairs with
+        # the Heidemann-Khalil critical-point solver.
+        from pvtcore.envelope.fast_envelope import calculate_phase_envelope_fast
 
-        fluid_family = _infer_phase_envelope_runtime_family(config)
-        continuation_policy = resolve_continuation_runtime_policy(fluid_family)
-        continuation_scan_points = max(
-            int(continuation_policy.n_pressure_points),
-            int(env_config.n_points) * 2,
-        )
-
-        temperatures = np.linspace(
-            env_config.temperature_min_k,
-            env_config.temperature_max_k,
-            env_config.n_points,
-            dtype=float,
-        ).tolist()
-        envelope = trace_envelope_continuation(
-            temperatures=temperatures,
-            composition=z,
+        envelope = calculate_phase_envelope_fast(
+            composition=np.asarray(z, dtype=float),
             components=components,
             eos=eos,
             binary_interaction=binary_interaction,
+            T_start=float(env_config.temperature_min_k),
+            T_step_initial=max(
+                (float(env_config.temperature_max_k) - float(env_config.temperature_min_k))
+                / max(int(env_config.n_points), 1),
+                1.0,
+            ),
+            max_points=max(int(env_config.n_points) * 4, 200),
+            detect_critical=True,
             cancel_check=cancel_check,
-            n_pressure_points=continuation_scan_points,
-            runtime_policy=continuation_policy,
         )
-        if not envelope.converged:
+        if cancel_check is not None:
+            cancel_check()
+
+        if len(envelope.bubble_T) == 0 and len(envelope.dew_T) == 0:
             raise RuntimeError(
                 "Phase envelope failed: no saturation points found in the requested temperature range. "
                 "Suggestions: widen the temperature range; lower temperature_min_k; verify inputs are in K/Pa; "
@@ -1030,19 +1042,19 @@ def execute_phase_envelope(
 
         bubble_points = [
             PhaseEnvelopePoint(
-                temperature_k=float(state.temperature),
-                pressure_pa=float(state.pressure),
+                temperature_k=float(T),
+                pressure_pa=float(P),
                 point_type='bubble',
             )
-            for state in envelope.bubble_states
+            for T, P in zip(envelope.bubble_T, envelope.bubble_P)
         ]
         dew_points = [
             PhaseEnvelopePoint(
-                temperature_k=float(state.temperature),
-                pressure_pa=float(state.pressure),
+                temperature_k=float(T),
+                pressure_pa=float(P),
                 point_type='dew',
             )
-            for state in envelope.dew_states
+            for T, P in zip(envelope.dew_T, envelope.dew_P)
         ]
 
         if len(bubble_points) == 0 or len(dew_points) == 0:
@@ -1053,12 +1065,14 @@ def execute_phase_envelope(
             )
 
         critical = None
-        if envelope.critical_state is not None:
+        critical_source = None
+        if envelope.critical_T is not None and envelope.critical_P is not None:
             critical = PhaseEnvelopePoint(
-                temperature_k=float(envelope.critical_state.temperature),
-                pressure_pa=float(envelope.critical_state.pressure),
+                temperature_k=float(envelope.critical_T),
+                pressure_pa=float(envelope.critical_P),
                 point_type='critical',
             )
+            critical_source = "heidemann_khalil"
 
         all_points = bubble_points + dew_points + ([critical] if critical is not None else [])
         cricondenbar = None
@@ -1084,10 +1098,12 @@ def execute_phase_envelope(
             cricondenbar=cricondenbar,
             cricondentherm=cricondentherm,
             tracing_method=tracing_method,
-            continuation_switched=bool(envelope.switched),
-            critical_source=envelope.critical_state.source if envelope.critical_state is not None else None,
-            bubble_termination_reason=envelope.bubble_termination_reason,
-            dew_termination_reason=envelope.dew_termination_reason,
+            continuation_switched=None,
+            critical_source=critical_source,
+            bubble_termination_reason=None,
+            bubble_termination_temperature_k=None,
+            dew_termination_reason=None,
+            dew_termination_temperature_k=None,
         )
 
     from pvtcore.envelope import trace_phase_envelope

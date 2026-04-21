@@ -789,7 +789,7 @@ class ResultsTableWidget(QWidget):
         if self._current_result is not None:
             config = self._current_result.config.pt_flash_config
         if config is None:
-            return PressureUnit.BAR, TemperatureUnit.C
+            return PressureUnit.PSIA, TemperatureUnit.C
         return config.pressure_unit, config.temperature_unit
 
     def _saturation_display_units(self) -> tuple[PressureUnit, TemperatureUnit]:
@@ -801,7 +801,7 @@ class ResultsTableWidget(QWidget):
                 or self._current_result.config.dew_point_config
             )
         if config is None:
-            return PressureUnit.BAR, TemperatureUnit.C
+            return PressureUnit.PSIA, TemperatureUnit.C
         return config.pressure_unit, config.temperature_unit
 
     def _stability_display_units(self) -> tuple[PressureUnit, TemperatureUnit]:
@@ -810,7 +810,7 @@ class ResultsTableWidget(QWidget):
         if self._current_result is not None:
             config = self._current_result.config.stability_analysis_config
         if config is None:
-            return PressureUnit.BAR, TemperatureUnit.C
+            return PressureUnit.PSIA, TemperatureUnit.C
         return config.pressure_unit, config.temperature_unit
 
     def _cce_display_units(self) -> tuple[PressureUnit, TemperatureUnit]:
@@ -819,7 +819,7 @@ class ResultsTableWidget(QWidget):
         if self._current_result is not None:
             config = self._current_result.config.cce_config
         if config is None:
-            return PressureUnit.BAR, TemperatureUnit.C
+            return PressureUnit.PSIA, TemperatureUnit.C
         return config.pressure_unit, config.temperature_unit
 
     def _dl_display_units(self) -> tuple[PressureUnit, TemperatureUnit]:
@@ -828,7 +828,7 @@ class ResultsTableWidget(QWidget):
         if self._current_result is not None:
             config = self._current_result.config.dl_config
         if config is None:
-            return PressureUnit.BAR, TemperatureUnit.C
+            return PressureUnit.PSIA, TemperatureUnit.C
         return config.pressure_unit, config.temperature_unit
 
     def _swelling_display_units(self) -> tuple[PressureUnit, TemperatureUnit]:
@@ -837,7 +837,7 @@ class ResultsTableWidget(QWidget):
         if self._current_result is not None:
             config = self._current_result.config.swelling_test_config
         if config is None:
-            return PressureUnit.BAR, TemperatureUnit.C
+            return PressureUnit.PSIA, TemperatureUnit.C
         return config.pressure_unit, config.temperature_unit
 
     def _plus_fraction_summary_rows(self) -> list[tuple[str, str]]:
@@ -1090,6 +1090,21 @@ class ResultsTableWidget(QWidget):
             ("Bubble Points", str(len(result.bubble_curve))),
             ("Dew Points", str(len(result.dew_curve))),
         ]
+
+        if result.continuation_switched is not None:
+            summary_data.append(("Switched", "yes" if result.continuation_switched else "no"))
+
+        if result.bubble_termination_reason:
+            bubble_stop = result.bubble_termination_reason
+            if result.bubble_termination_temperature_k is not None:
+                bubble_stop = f"{bubble_stop} @ {result.bubble_termination_temperature_k - 273.15:.2f} C"
+            summary_data.append(("Bubble Stop", bubble_stop))
+
+        if result.dew_termination_reason:
+            dew_stop = result.dew_termination_reason
+            if result.dew_termination_temperature_k is not None:
+                dew_stop = f"{dew_stop} @ {result.dew_termination_temperature_k - 273.15:.2f} C"
+            summary_data.append(("Dew Stop", dew_stop))
 
         if result.critical_point:
             summary_data.append((
@@ -2065,8 +2080,8 @@ class UnitConverterWidget(QWidget):
                 units = list(PressureUnit)
                 self._populate_units(self.from_unit_combo, units)
                 self._populate_units(self.to_unit_combo, units)
-                self.from_unit_combo.setCurrentIndex(self.from_unit_combo.findData(PressureUnit.BAR))
-                self.to_unit_combo.setCurrentIndex(self.to_unit_combo.findData(PressureUnit.PSIA))
+                self.from_unit_combo.setCurrentIndex(self.from_unit_combo.findData(PressureUnit.PSIA))
+                self.to_unit_combo.setCurrentIndex(self.to_unit_combo.findData(PressureUnit.BAR))
                 self.value_spin.setRange(0.0, 1000000000.0)
                 self.value_spin.setValue(1.0)
                 self.value_spin.setDecimals(6)
@@ -2439,7 +2454,7 @@ class ResultsPlotWidget(QWidget):
                 or self._current_result.config.dew_point_config
             )
         if config is None:
-            return PressureUnit.BAR
+            return PressureUnit.PSIA
         return config.pressure_unit
 
     def _stability_plot_units(self) -> tuple[PressureUnit, TemperatureUnit]:
@@ -2448,7 +2463,7 @@ class ResultsPlotWidget(QWidget):
         if self._current_result is not None:
             config = self._current_result.config.stability_analysis_config
         if config is None:
-            return PressureUnit.BAR, TemperatureUnit.C
+            return PressureUnit.PSIA, TemperatureUnit.C
         return config.pressure_unit, config.temperature_unit
 
     def _cce_plot_units(self) -> tuple[PressureUnit, TemperatureUnit]:
@@ -2457,7 +2472,7 @@ class ResultsPlotWidget(QWidget):
         if self._current_result is not None:
             config = self._current_result.config.cce_config
         if config is None:
-            return PressureUnit.BAR, TemperatureUnit.C
+            return PressureUnit.PSIA, TemperatureUnit.C
         return config.pressure_unit, config.temperature_unit
 
     def _dl_plot_units(self) -> tuple[PressureUnit, TemperatureUnit]:
@@ -2466,7 +2481,7 @@ class ResultsPlotWidget(QWidget):
         if self._current_result is not None:
             config = self._current_result.config.dl_config
         if config is None:
-            return PressureUnit.BAR, TemperatureUnit.C
+            return PressureUnit.PSIA, TemperatureUnit.C
         return config.pressure_unit, config.temperature_unit
 
     def _swelling_plot_units(self) -> tuple[PressureUnit, TemperatureUnit]:
@@ -2475,7 +2490,7 @@ class ResultsPlotWidget(QWidget):
         if self._current_result is not None:
             config = self._current_result.config.swelling_test_config
         if config is None:
-            return PressureUnit.BAR, TemperatureUnit.C
+            return PressureUnit.PSIA, TemperatureUnit.C
         return config.pressure_unit, config.temperature_unit
 
     def _plot_placeholder(self, message: str, *, title: str = "Plot") -> None:
@@ -3267,19 +3282,13 @@ class ResultsPlotWidget(QWidget):
             )
 
         def _curve_xy(points) -> tuple[list[float], list[float]]:
+            # Plot only traced saturation points. Do not inject the detected critical
+            # point into these polylines: it generally does not lie on the discrete
+            # bubble or dew locus, and sorting by T creates fake segments (spikes).
             xy = [
                 (p.temperature_k - 273.15, p.pressure_pa / 1e5)
                 for p in points
             ]
-            if critical_xy is not None:
-                crit_t, crit_p = critical_xy
-                is_duplicate = any(
-                    abs(t - crit_t) <= 1e-9 and abs(p - crit_p) <= 1e-9
-                    for t, p in xy
-                )
-                if not is_duplicate:
-                    xy.append(critical_xy)
-                    xy.sort(key=lambda item: item[0])
             temps = [t for t, _ in xy]
             pressures = [p for _, p in xy]
             return temps, pressures

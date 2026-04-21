@@ -901,8 +901,13 @@ def test_phase_envelope_tracers(tracing_method: str) -> None:
     assert envelope.tracing_method is expected
 
     if tracing_method == "continuation":
-        assert envelope.continuation_switched is True
-        assert envelope.critical_source is not None
+        # The continuation path now routes through the fast Newton tracer
+        # (``calculate_phase_envelope_fast``) and H-K critical-point detection,
+        # so continuation-specific handoff/termination metadata is no longer
+        # produced and a thermodynamically-certified critical point is expected.
+        assert envelope.continuation_switched is None
+        assert envelope.critical_point is not None
+        assert envelope.critical_source == "heidemann_khalil"
         assert len(envelope.bubble_curve) >= 2
         assert len(envelope.dew_curve) >= 3
 
