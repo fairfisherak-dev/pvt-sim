@@ -73,15 +73,6 @@ pvtsim_pypackages_permissive.md
 # CI on origin/main pauses until those routines are wired up)
 .github/workflows/
 
-# Editor / local-tooling artifacts (kept on disk for local dev, never committed)
-.agents/
-.claude/
-.cursor/
-.cursorindexingignore
-AGENTS.md
-CLAUDE.md
-PVTSIM_DEPENDENCY_MAP.md
-
 # Private course materials (kept on disk, never committed)
 LECTURE_SLIDES_MERGED.md
 *lecture*slides*

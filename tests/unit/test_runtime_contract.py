@@ -47,6 +47,7 @@ from pvtcore.validation.pete665_assignment import (
     build_assignment_fluid,
     load_assignment_case,
     psia_to_pa,
+    run_assignment_case,
 )
 
 # ---------------------------------------------------------------------------
@@ -1362,6 +1363,36 @@ def test_assignment_preset() -> None:
     assert preset.bubble_point_config.pressure_initial_pa == pytest.approx(preset.bubble_pressure_pa)
     assert preset.dl_config.bubble_pressure_pa == pytest.approx(preset.bubble_pressure_pa)
     assert preset.dl_config.bubble_pressure_pa > max(preset.dl_config.pressure_points_pa)
+
+
+def test_assignment_desktop_dl_matches_residual_oil_basis() -> None:
+    preset = build_assignment_desktop_preset(initials="TANS")
+    reference = run_assignment_case(initials="TANS")["dl"]
+    config = RunConfig.model_validate(
+        {
+            "run_name": "Assignment DL - runtime regression",
+            "composition": preset.composition.model_dump(mode="json"),
+            "calculation_type": "differential_liberation",
+            "eos_type": preset.eos_type.value,
+            "dl_config": preset.dl_config.model_dump(mode="json"),
+        }
+    )
+
+    result = run_calculation(config=config, write_artifacts=False)
+
+    assert result.dl_result is not None
+    dl = result.dl_result
+    assert dl.rsi_scf_stb == pytest.approx(reference["rsdb_scf_stb"], rel=5e-4)
+    assert dl.boi == pytest.approx(reference["boi"], rel=5e-4)
+    assert len(dl.steps) == len(reference["steps"])
+    for actual, expected in zip(dl.steps, reference["steps"]):
+        assert actual.rs_scf_stb == pytest.approx(expected["rsd_scf_stb"], rel=5e-4)
+        assert actual.bo == pytest.approx(expected["bo"], rel=5e-4)
+
+    assert dl.steps[-1].rs_scf_stb == pytest.approx(0.0, abs=1e-9)
+    assert dl.steps[-1].bo == pytest.approx(1.0, abs=1e-9)
+    assert dl.steps[-1].bg is None
+    assert dl.steps[-1].bt == pytest.approx(1.0, abs=1e-9)
 
 
 # ===================================================================

@@ -276,7 +276,6 @@ Keep durable standards in durable files.
 
 Use these files for rules that should still be true a month from now:
 
-- `AGENTS.md` for repo execution boundaries and controller/lane rules
 - `CONTRIBUTING.md` for contributor-facing expectations
 - `docs/development.md` for engineering and restoration standards
 - `docs/runtime_surface_standard.md` for app/runtime parity rules
@@ -287,11 +286,11 @@ issue threads.
 
 ### 8.2 Temporary Lane Briefs
 
-Use lane prompts for temporary scoped restoration work:
+Use temporary briefs for scoped restoration work:
 
-- place reusable lane prompts under `.agents/`
-- record active lane ownership and touched surfaces in `PVTSIM_DEPENDENCY_MAP.md`
-- keep lane prompts narrow and slice-specific
+- keep reusable prompts and coordination notes outside the tracked submission
+- record active ownership and touched surfaces in local coordination notes
+- keep temporary prompts narrow and slice-specific
 
 Lane prompts should tell a worker:
 
